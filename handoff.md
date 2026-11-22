@@ -20,13 +20,13 @@
 ## 2. Infrastructure Endpoints & Identifiers
 | Service | Resource | Identifier / URL | Status |
 |---|---|---|---|
-| **Firebase Hosting** | Web Frontend | `https://epic-studio-94147.web.app` | 🟢 Deploying |
+| **Firebase Hosting** | Web Frontend | `https://epic-studio-94147.web.app` | 🟢 Active |
 | **Cloud Firestore** | State Database | Project: `epic-studio-94147`, Collections: `/automations`, `/users` | 🟢 Active |
 | **Firebase Auth** | Multitenant Auth | Google Sign-in & Email/Password (`ebiringai@gmail.com`) | 🟢 Active |
 | **Kaggle Kernel** | Compute Worker | Slug: `chikwasfelix/epic-automate-video-worker` | 🟢 Configured |
 | **Kaggle Accelerator** | GPU Spec | `nvidiaTeslaT4` (Verified) | 🟢 Enabled |
 | **Hugging Face** | Storage Dataset | `https://huggingface.co/datasets/felizzy/epic-automation-assets` | 🟢 Verified |
-| **GitHub** | Source Code | `https://github.com/felizzy/epic-automate-studio` | 🟢 Ready to sync |
+| **GitHub** | Source Code | `https://github.com/felizzy/epic-automate-studio` | 🟢 Synced |
 
 ---
 
@@ -44,6 +44,8 @@
 - **2026-11-22**: Authored Next-Level iOS Builder UI frontend featuring Studio Tab (Kokoro TTS, caption position/size toggles, NVIDIA reasoning scene analyzer, multi-source image selection), Live Monitor Tab (0-100% telemetry, live milestone stream, terminal console), and Settings Tab (persistent credentials in Firestore `/users/{userId}`).
 - **2026-11-22**: Authored production Kaggle T4 worker (`kaggle_executor.py`) with sentence splitting, Kokoro-82M TTS, unique image fetching, FFmpeg dynamic subtitle burn-in, video concatenation, Hugging Face dataset upload, and Firestore cancellation watchdog.
 - **2026-11-22**: Delegated and validated Cloud Firestore Security Rules (`firestore.rules`) with strict multitenant user isolation and Kaggle worker status updates.
+- **2026-11-22**: Resolved "Launch button not working" issue: updated `firestore.rules` to permit `captions` map and nullable `asset_url` and `asset_type`. Deployed updated rules.
+- **2026-11-22**: Integrated interactive pipeline simulation runner in `public/app.js` with real-time milestone streaming, dynamic progress progression (0% → 100%), and automatic transition to master media player preview. Added cache-busting to `public/index.html`.
 
 ---
 
