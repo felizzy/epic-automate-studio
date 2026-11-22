@@ -438,8 +438,8 @@ btnLaunch.addEventListener("click", async () => {
     // Start Real-Time Snapshot Listener
     listenToJob(jobId);
 
-    // Launch pipeline progress simulator/runner
-    runPipelineSimulation(jobId, jobData);
+    // Trigger real Kaggle T4 GPU compute worker
+    await dispatchToKaggle(jobId, jobData);
 
   } catch (err) {
     console.error("Failed to write job to Firestore:", err);
@@ -456,9 +456,14 @@ btnCancel.addEventListener("click", async () => {
   const confirmCancel = confirm("Are you sure you want to abort this automation on Kaggle?");
   if (!confirmCancel) return;
 
+  if (kaggleWatcherInterval) {
+    clearInterval(kaggleWatcherInterval);
+    kaggleWatcherInterval = null;
+  }
+
   try {
     btnCancel.disabled = true;
-    appendLog("⏹ Requesting immediate cancellation...", "warn");
+    appendLog("⏹ Requesting immediate cancellation on Kaggle...", "warn");
     
     const jobDocRef = doc(db, "automations", currentJobId);
     await updateDoc(jobDocRef, {
@@ -508,6 +513,10 @@ function listenToJob(jobId) {
 
     // Terminal completion / failure states
     if (status === "completed") {
+      if (kaggleWatcherInterval) {
+        clearInterval(kaggleWatcherInterval);
+        kaggleWatcherInterval = null;
+      }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
       progressFill.style.background = "linear-gradient(135deg, #10b981 0%, #059669 100%)";
@@ -522,11 +531,19 @@ function listenToJob(jobId) {
         switchTab("studio");
       }
     } else if (status === "cancelled") {
+      if (kaggleWatcherInterval) {
+        clearInterval(kaggleWatcherInterval);
+        kaggleWatcherInterval = null;
+      }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
       progressFill.style.background = "#ef4444";
       appendLog("⏹ Job execution stopped by user.", "warn");
     } else if (status === "failed") {
+      if (kaggleWatcherInterval) {
+        clearInterval(kaggleWatcherInterval);
+        kaggleWatcherInterval = null;
+      }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
       progressFill.style.background = "#f59e0b";
@@ -550,87 +567,153 @@ btnCopyAssetUrl.addEventListener("click", () => {
 updateScriptStats();
 
 // ==========================================================================
-// 7. Interactive Pipeline Simulation & Runner
+// 7. Kaggle T4 Dispatch & Real-Time Kernel Watchdog
 // ==========================================================================
-async function runPipelineSimulation(jobId, jobData) {
-  const sentences = jobData.sentences || [];
-  const total = sentences.length || 1;
+let kaggleWatcherInterval = null;
+
+async function dispatchToKaggle(jobId, jobData) {
+  const kaggleUser = cfgKaggleUser.value.trim();
+  const kaggleKey = cfgKaggleKey.value.trim();
+  const hfToken = cfgHfToken.value.trim();
+  const hfRepo = cfgHfRepo.value.trim();
+  const nvidiaKey = cfgNvidiaKey.value.trim();
   const jobDocRef = doc(db, "automations", jobId);
 
-  const steps = [
-    { pct: 15, msg: "Initializing Kokoro-82M model & NVIDIA vision pipeline...", log: "[SYSTEM] Kaggle T4 worker assigned. CUDA ready." }
-  ];
-
-  for (let i = 0; i < total; i++) {
-    steps.push({
-      pct: 18 + Math.round((i / total) * 55),
-      msg: `Scene ${i + 1}/${total}: Reasoning visual scene & retrieving unique image...`,
-      log: `[REASONING] Scene ${i + 1}: NVIDIA NIM generated visual query for "${sentences[i].slice(0, 32)}..."`
-    });
-    steps.push({
-      pct: 22 + Math.round((i / total) * 55),
-      msg: `Scene ${i + 1}/${total}: Synthesizing speech with Kokoro-82M (${jobData.voice})...`,
-      log: `[AUDIO] Scene ${i + 1}: Kokoro-82M synthesized audio chunk (~3.5s)`
-    });
-    steps.push({
-      pct: 26 + Math.round((i / total) * 55),
-      msg: `Scene ${i + 1}/${total}: Assembling video scene with dynamic captions (${jobData.captions.style})...`,
-      log: `[VIDEO] Scene ${i + 1}: FFmpeg encoded 1080p scene with ${jobData.captions.position} caption`
-    });
+  if (!kaggleUser || !kaggleKey) {
+    appendLog("⚠️ Kaggle credentials missing in Settings. Please enter your Kaggle username and API key.", "warn");
+    return;
   }
 
-  steps.push({ pct: 82, msg: `Concatenating all ${total} scenes into master 1080p video...`, log: `[FFMPEG] All ${total} scene streams concatenated into master MP4.` });
-  steps.push({ pct: 92, msg: `Uploading final video to Hugging Face Datasets (${jobData.hf_dataset_repo})...`, log: `[HUGGINGFACE] Uploading final_video.mp4 to Hugging Face Datasets...` });
+  appendLog(`🚀 Triggering Kaggle T4 compute for ${kaggleUser}/epic-automate-video-worker...`, "info");
 
-  for (const step of steps) {
-    await new Promise(r => setTimeout(r, 2000));
-
-    try {
-      const currentSnap = await getDoc(jobDocRef);
-      if (!currentSnap.exists()) return;
-      const currentData = currentSnap.data();
-      if (currentData.cancel_requested || currentData.status === "cancelled") {
-        return;
-      }
-
-      const updatedLogs = currentData.logs || [];
-      if (step.log) updatedLogs.push(step.log);
-
-      await updateDoc(jobDocRef, {
-        progress: step.pct,
-        current_milestone: step.msg,
-        logs: updatedLogs,
-        updated_at: new Date().toISOString()
-      });
-    } catch (err) {
-      console.warn("Telemetry update warning:", err);
-    }
-  }
-
-  // Final completion
-  await new Promise(r => setTimeout(r, 1200));
   try {
-    const finalSnap = await getDoc(jobDocRef);
-    if (!finalSnap.exists() || finalSnap.data().cancel_requested) return;
+    // 1. Fetch the master Kaggle worker script
+    let pythonCode = "";
+    try {
+      const resp = await fetch("kaggle_executor.py?v=" + Date.now());
+      if (resp.ok) pythonCode = await resp.text();
+    } catch (e) {
+      console.warn("Could not fetch kaggle_executor.py:", e);
+    }
 
-    const streamableVideoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
-    const hfAssetUrl = `https://huggingface.co/datasets/${jobData.hf_dataset_repo}/resolve/main/outputs/${jobId}/final_video.mp4`;
+    if (!pythonCode || pythonCode.length < 100) {
+      appendLog("Fetching pipeline worker script...", "sys");
+      const resp2 = await fetch("kaggle_executor.py");
+      if (resp2.ok) pythonCode = await resp2.text();
+    }
 
+    // 2. Inject job-specific environment overrides directly into Python code header
+    const injectedHeader = `# Auto-injected execution parameters for Job: ${jobId}
+import os
+os.environ["FIREBASE_PROJECT_ID"] = "epic-studio-94147"
+os.environ["JOB_ID"] = "${jobId}"
+os.environ["HF_TOKEN"] = "${hfToken}"
+os.environ["HF_DATASET_REPO"] = "${hfRepo}"
+os.environ["NVIDIA_API_KEY"] = "${nvidiaKey}"
+`;
+    const finalCode = injectedHeader + "\n" + pythonCode;
+
+    // 3. Dispatch to Kaggle API via REST
+    const kaggleUrl = "https://www.kaggle.com/api/v1/kernels/push";
+    const pushPayload = {
+      slug: `${kaggleUser}/epic-automate-video-worker`,
+      newTitle: "Epic Automate Video Worker",
+      text: finalCode,
+      language: "python",
+      kernelType: "script",
+      isPrivate: true,
+      enableGpu: true,
+      enableInternet: true
+    };
+
+    appendLog(`[KAGGLE API] POST https://www.kaggle.com/api/v1/kernels/push (Bearer ${kaggleKey.slice(0, 10)}...)`, "sys");
+
+    const pushRes = await fetch(kaggleUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + kaggleKey,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(pushPayload)
+    });
+
+    if (!pushRes.ok) {
+      const errText = await pushRes.text();
+      throw new Error(`Kaggle API returned HTTP ${pushRes.status}: ${errText}`);
+    }
+
+    const pushData = await pushRes.json();
+    appendLog(`🎉 Kaggle T4 Worker successfully pushed! Version: ${pushData.versionNumber || 1}`, "success");
+    appendLog(`🔗 Kaggle Kernel: https://www.kaggle.com/code/${kaggleUser}/epic-automate-video-worker`, "info");
+
+    // Update Firestore to indicate Kaggle container is spinning up
     await updateDoc(jobDocRef, {
-      progress: 100,
-      current_milestone: "Video generation complete! Output asset ready for preview.",
-      status: "completed",
-      asset_url: streamableVideoUrl,
-      asset_type: "video",
-      logs: [
-        ...(finalSnap.data().logs || []),
-        `[HUGGINGFACE] Direct asset URL: ${hfAssetUrl}`,
-        `[SUCCESS] Master 1080p video ready with Kokoro-82M audio & dynamic captions!`
-      ],
+      current_milestone: `Kaggle T4 worker triggered (v${pushData.versionNumber || 1}). Container queued & allocating GPU...`,
+      status: "running",
+      progress: 5,
       updated_at: new Date().toISOString()
     });
+
+    // Start polling Kaggle container status
+    startKaggleStatusWatcher(kaggleUser, kaggleKey, jobId);
+
   } catch (err) {
-    console.error("Final status update error:", err);
+    console.error("Kaggle Dispatch failed:", err);
+    appendLog(`❌ Kaggle trigger failed: ${err.message}`, "error");
+    try {
+      await updateDoc(jobDocRef, {
+        current_milestone: `Kaggle dispatch failed: ${err.message}`,
+        status: "failed",
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+    btnLaunch.disabled = false;
+    btnCancel.disabled = true;
   }
+}
+
+function startKaggleStatusWatcher(kaggleUser, kaggleKey, jobId) {
+  if (kaggleWatcherInterval) {
+    clearInterval(kaggleWatcherInterval);
+  }
+
+  let lastStatus = "";
+  let pollTicks = 0;
+
+  kaggleWatcherInterval = setInterval(async () => {
+    pollTicks++;
+    try {
+      const res = await fetch(`https://www.kaggle.com/api/v1/kernels/status?userName=${kaggleUser}&kernelSlug=epic-automate-video-worker`, {
+        headers: {
+          "Authorization": "Bearer " + kaggleKey
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const currentKaggleStatus = data.status || "unknown";
+
+        if (currentKaggleStatus !== lastStatus) {
+          lastStatus = currentKaggleStatus;
+          appendLog(`[KAGGLE T4 CONTAINER] Status updated to: ${currentKaggleStatus.toUpperCase()}`, "sys");
+
+          if (currentKaggleStatus === "queued") {
+            appendLog("⏳ Kaggle scheduler: Container queued in GPU cluster, preparing T4 accelerator...", "info");
+          } else if (currentKaggleStatus === "running") {
+            appendLog("⚡ Kaggle container running on Tesla T4 GPU. Executing Kokoro TTS & NVIDIA vision pipeline...", "info");
+          } else if (currentKaggleStatus === "complete") {
+            appendLog("✅ Kaggle kernel execution complete!", "success");
+            clearInterval(kaggleWatcherInterval);
+            kaggleWatcherInterval = null;
+          } else if (currentKaggleStatus === "error" || currentKaggleStatus === "failed") {
+            appendLog(`⚠️ Kaggle worker stopped with status: ${currentKaggleStatus}. Failure: ${data.failureMessage || 'None'}`, "error");
+            clearInterval(kaggleWatcherInterval);
+            kaggleWatcherInterval = null;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Kaggle status poll notice:", e);
+    }
+  }, 4500);
 }
 
