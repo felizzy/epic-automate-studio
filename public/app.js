@@ -91,6 +91,8 @@ const userProfileUid = document.getElementById("userProfileUid");
 const userLargeAvatar = document.getElementById("userLargeAvatar");
 const btnSignOut = document.getElementById("btnSignOut");
 const settingsForm = document.getElementById("settingsForm");
+const cfgGithubPat = document.getElementById("cfgGithubPat");
+const cfgGithubRepo = document.getElementById("cfgGithubRepo");
 const cfgKaggleUser = document.getElementById("cfgKaggleUser");
 const cfgKaggleKey = document.getElementById("cfgKaggleKey");
 const cfgNvidiaKey = document.getElementById("cfgNvidiaKey");
@@ -296,6 +298,8 @@ async function loadUserSettings(userId) {
 
     if (snap.exists()) {
       const data = snap.data();
+      if (data.github_pat && cfgGithubPat) cfgGithubPat.value = data.github_pat;
+      if (data.settings && data.settings.github_repo && cfgGithubRepo) cfgGithubRepo.value = data.settings.github_repo;
       if (data.kaggle_username) cfgKaggleUser.value = data.kaggle_username;
       if (data.kaggle_key) cfgKaggleKey.value = data.kaggle_key;
       if (data.nvidia_api_key) cfgNvidiaKey.value = data.nvidia_api_key;
@@ -316,13 +320,15 @@ async function loadUserSettings(userId) {
 async function saveUserSettings(userId, showToast = true) {
   try {
     const settingsData = {
-      kaggle_username: cfgKaggleUser.value.trim(),
-      kaggle_key: cfgKaggleKey.value.trim(),
+      github_pat: cfgGithubPat ? cfgGithubPat.value.trim() : "",
+      kaggle_username: cfgKaggleUser ? cfgKaggleUser.value.trim() : "",
+      kaggle_key: cfgKaggleKey ? cfgKaggleKey.value.trim() : "",
       nvidia_api_key: cfgNvidiaKey.value.trim(),
       hf_token: cfgHfToken.value.trim(),
       hf_dataset_repo: cfgHfRepo.value.trim(),
-      pexels_key: cfgPexelsKey.value.trim(),
-      unsplash_key: cfgUnsplashKey.value.trim(),
+      settings: {
+        github_repo: cfgGithubRepo ? cfgGithubRepo.value.trim() : "felizzy/epic-automate-studio"
+      },
       updated_at: new Date().toISOString()
     };
 
@@ -438,8 +444,8 @@ btnLaunch.addEventListener("click", async () => {
     // Start Real-Time Snapshot Listener
     listenToJob(jobId);
 
-    // Trigger real Kaggle T4 GPU compute worker
-    await dispatchToKaggle(jobId, jobData);
+    // Trigger real GitHub Actions compute runner
+    await dispatchToGithubActions(jobId, jobData);
 
   } catch (err) {
     console.error("Failed to write job to Firestore:", err);
@@ -453,25 +459,41 @@ btnLaunch.addEventListener("click", async () => {
 btnCancel.addEventListener("click", async () => {
   if (!currentJobId) return;
   
-  const confirmCancel = confirm("Are you sure you want to abort this automation on Kaggle?");
+  const confirmCancel = confirm("Are you sure you want to abort this automation on GitHub Actions?");
   if (!confirmCancel) return;
 
-  if (kaggleWatcherInterval) {
-    clearInterval(kaggleWatcherInterval);
-    kaggleWatcherInterval = null;
+  if (githubWatcherInterval) {
+    clearInterval(githubWatcherInterval);
+    githubWatcherInterval = null;
   }
 
   try {
     btnCancel.disabled = true;
-    appendLog("⏹ Requesting immediate cancellation on Kaggle...", "warn");
+    appendLog("⏹ Requesting immediate cancellation on GitHub Actions...", "warn");
     
     const jobDocRef = doc(db, "automations", currentJobId);
     await updateDoc(jobDocRef, {
       cancel_requested: true,
       status: "cancelled",
-      current_milestone: "Cancellation requested by user. Terminating worker...",
+      current_milestone: "Cancellation requested by user. Terminating runner...",
       updated_at: new Date().toISOString()
     });
+
+    // Also attempt API cancellation of active GitHub Actions run if known
+    if (activeRunId && cfgGithubPat && cfgGithubRepo) {
+      try {
+        await fetch(`https://api.github.com/repos/${cfgGithubRepo.value.trim()}/actions/runs/${activeRunId}/cancel`, {
+          method: "POST",
+          headers: {
+            "Authorization": "token " + cfgGithubPat.value.trim(),
+            "Accept": "application/vnd.github.v3+json"
+          }
+        });
+        appendLog(`[GITHUB RUNNER] Cancel signal sent to Run #${activeRunId}`, "sys");
+      } catch (cErr) {
+        console.warn("GitHub Actions cancel call notice:", cErr);
+      }
+    }
   } catch (err) {
     console.error("Cancel failed:", err);
     appendLog(`Cancel failed: ${err.message}`, "error");
@@ -513,9 +535,9 @@ function listenToJob(jobId) {
 
     // Terminal completion / failure states
     if (status === "completed") {
-      if (kaggleWatcherInterval) {
-        clearInterval(kaggleWatcherInterval);
-        kaggleWatcherInterval = null;
+      if (githubWatcherInterval) {
+        clearInterval(githubWatcherInterval);
+        githubWatcherInterval = null;
       }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
@@ -531,18 +553,18 @@ function listenToJob(jobId) {
         switchTab("studio");
       }
     } else if (status === "cancelled") {
-      if (kaggleWatcherInterval) {
-        clearInterval(kaggleWatcherInterval);
-        kaggleWatcherInterval = null;
+      if (githubWatcherInterval) {
+        clearInterval(githubWatcherInterval);
+        githubWatcherInterval = null;
       }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
       progressFill.style.background = "#ef4444";
       appendLog("⏹ Job execution stopped by user.", "warn");
     } else if (status === "failed") {
-      if (kaggleWatcherInterval) {
-        clearInterval(kaggleWatcherInterval);
-        kaggleWatcherInterval = null;
+      if (githubWatcherInterval) {
+        clearInterval(githubWatcherInterval);
+        githubWatcherInterval = null;
       }
       btnLaunch.disabled = false;
       btnCancel.disabled = true;
@@ -567,102 +589,76 @@ btnCopyAssetUrl.addEventListener("click", () => {
 updateScriptStats();
 
 // ==========================================================================
-// 7. Kaggle T4 Dispatch & Real-Time Kernel Watchdog
+// 7. GitHub Actions Dispatch & Real-Time Runner Watchdog
 // ==========================================================================
-let kaggleWatcherInterval = null;
+let githubWatcherInterval = null;
+let activeRunId = null;
 
-async function dispatchToKaggle(jobId, jobData) {
-  const kaggleUser = cfgKaggleUser.value.trim();
-  const kaggleKey = cfgKaggleKey.value.trim();
+async function dispatchToGithubActions(jobId, jobData) {
+  const githubPat = cfgGithubPat ? cfgGithubPat.value.trim() : "";
+  const githubRepo = cfgGithubRepo ? cfgGithubRepo.value.trim() : "felizzy/epic-automate-studio";
   const hfToken = cfgHfToken.value.trim();
   const hfRepo = cfgHfRepo.value.trim();
   const nvidiaKey = cfgNvidiaKey.value.trim();
   const jobDocRef = doc(db, "automations", jobId);
 
-  if (!kaggleUser || !kaggleKey) {
-    appendLog("⚠️ Kaggle credentials missing in Settings. Please enter your Kaggle username and API key.", "warn");
+  if (!githubPat) {
+    appendLog("⚠️ GitHub PAT missing in Settings. Please enter your personal access token with repo access.", "warn");
     return;
   }
 
-  appendLog(`🚀 Triggering Kaggle T4 compute for ${kaggleUser}/epic-automate-video-worker...`, "info");
+  appendLog(`🚀 Triggering GitHub Actions video runner on ${githubRepo}...`, "info");
 
   try {
-    // 1. Fetch the master Kaggle worker script
-    let pythonCode = "";
-    try {
-      const resp = await fetch("kaggle_executor.py?v=" + Date.now());
-      if (resp.ok) pythonCode = await resp.text();
-    } catch (e) {
-      console.warn("Could not fetch kaggle_executor.py:", e);
-    }
-
-    if (!pythonCode || pythonCode.length < 100) {
-      appendLog("Fetching pipeline worker script...", "sys");
-      const resp2 = await fetch("kaggle_executor.py");
-      if (resp2.ok) pythonCode = await resp2.text();
-    }
-
-    // 2. Inject job-specific environment overrides directly into Python code header
-    const injectedHeader = `# Auto-injected execution parameters for Job: ${jobId}
-import os
-os.environ["FIREBASE_PROJECT_ID"] = "epic-studio-94147"
-os.environ["JOB_ID"] = "${jobId}"
-os.environ["HF_TOKEN"] = "${hfToken}"
-os.environ["HF_DATASET_REPO"] = "${hfRepo}"
-os.environ["NVIDIA_API_KEY"] = "${nvidiaKey}"
-`;
-    const finalCode = injectedHeader + "\n" + pythonCode;
-
-    // 3. Dispatch to Kaggle API via REST
-    const kaggleUrl = "https://www.kaggle.com/api/v1/kernels/push";
-    const pushPayload = {
-      slug: `${kaggleUser}/epic-automate-video-worker`,
-      newTitle: "Epic Automate Video Worker",
-      text: finalCode,
-      language: "python",
-      kernelType: "script",
-      isPrivate: true,
-      enableGpu: true,
-      enableInternet: true
+    const dispatchUrl = `https://api.github.com/repos/${githubRepo}/actions/workflows/video_worker.yml/dispatches`;
+    const dispatchPayload = {
+      ref: "main",
+      inputs: {
+        job_id: jobId,
+        firebase_project_id: "epic-studio-94147",
+        hf_dataset_repo: hfRepo,
+        hf_token: hfToken,
+        nvidia_api_key: nvidiaKey
+      }
     };
 
-    appendLog(`[KAGGLE API] POST https://www.kaggle.com/api/v1/kernels/push (Bearer ${kaggleKey.slice(0, 10)}...)`, "sys");
+    appendLog(`[GITHUB API] POST /repos/${githubRepo}/actions/workflows/video_worker.yml/dispatches`, "sys");
 
-    const pushRes = await fetch(kaggleUrl, {
+    const ghRes = await fetch(dispatchUrl, {
       method: "POST",
       headers: {
-        "Authorization": "Bearer " + kaggleKey,
+        "Authorization": "token " + githubPat,
+        "Accept": "application/vnd.github.v3+json",
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(pushPayload)
+      body: JSON.stringify(dispatchPayload)
     });
 
-    if (!pushRes.ok) {
-      const errText = await pushRes.text();
-      throw new Error(`Kaggle API returned HTTP ${pushRes.status}: ${errText}`);
+    if (!ghRes.ok && ghRes.status !== 204) {
+      const errText = await ghRes.text();
+      throw new Error(`GitHub Actions API returned HTTP ${ghRes.status}: ${errText}`);
     }
 
-    const pushData = await pushRes.json();
-    appendLog(`🎉 Kaggle T4 Worker successfully pushed! Version: ${pushData.versionNumber || 1}`, "success");
-    appendLog(`🔗 Kaggle Kernel: https://www.kaggle.com/code/${kaggleUser}/epic-automate-video-worker`, "info");
+    appendLog(`🎉 GitHub Actions workflow dispatched successfully! Runner starting instantly...`, "success");
+    appendLog(`🔗 Workflow Run Dashboard: https://github.com/${githubRepo}/actions`, "info");
 
-    // Update Firestore to indicate Kaggle container is spinning up
+    // Update Firestore to indicate GitHub Actions worker is spinning up
     await updateDoc(jobDocRef, {
-      current_milestone: `Kaggle T4 worker triggered (v${pushData.versionNumber || 1}). Container queued & allocating GPU...`,
+      current_milestone: `GitHub Actions runner dispatched. Ubuntu runner starting Kokoro TTS pipeline...`,
       status: "running",
       progress: 5,
       updated_at: new Date().toISOString()
     });
 
-    // Start polling Kaggle container status
-    startKaggleStatusWatcher(kaggleUser, kaggleKey, jobId);
+    // Start polling GitHub Actions runner status
+    startGithubActionsWatcher(githubRepo, githubPat, jobId);
 
   } catch (err) {
-    console.error("Kaggle Dispatch failed:", err);
-    appendLog(`❌ Kaggle trigger failed: ${err.message}`, "error");
+    console.error("GitHub Actions Dispatch failed:", err);
+    appendLog(`❌ GitHub Actions trigger failed: ${err.message}`, "error");
     try {
       await updateDoc(jobDocRef, {
-        current_milestone: `Kaggle dispatch failed: ${err.message}`,
+        current_milestone: `GitHub Actions dispatch failed: ${err.message}`,
         status: "failed",
         updated_at: new Date().toISOString()
       });
@@ -672,48 +668,54 @@ os.environ["NVIDIA_API_KEY"] = "${nvidiaKey}"
   }
 }
 
-function startKaggleStatusWatcher(kaggleUser, kaggleKey, jobId) {
-  if (kaggleWatcherInterval) {
-    clearInterval(kaggleWatcherInterval);
+function startGithubActionsWatcher(githubRepo, githubPat, jobId) {
+  if (githubWatcherInterval) {
+    clearInterval(githubWatcherInterval);
   }
 
   let lastStatus = "";
   let pollTicks = 0;
 
-  kaggleWatcherInterval = setInterval(async () => {
+  githubWatcherInterval = setInterval(async () => {
     pollTicks++;
     try {
-      const res = await fetch(`https://www.kaggle.com/api/v1/kernels/status?userName=${kaggleUser}&kernelSlug=epic-automate-video-worker`, {
+      const res = await fetch(`https://api.github.com/repos/${githubRepo}/actions/runs?event=workflow_dispatch&per_page=1`, {
         headers: {
-          "Authorization": "Bearer " + kaggleKey
+          "Authorization": "token " + githubPat,
+          "Accept": "application/vnd.github.v3+json"
         }
       });
       if (res.ok) {
         const data = await res.json();
-        const currentKaggleStatus = data.status || "unknown";
+        if (data.workflow_runs && data.workflow_runs.length > 0) {
+          const run = data.workflow_runs[0];
+          activeRunId = run.id;
+          const currentStatus = run.status;
+          const conclusion = run.conclusion;
 
-        if (currentKaggleStatus !== lastStatus) {
-          lastStatus = currentKaggleStatus;
-          appendLog(`[KAGGLE T4 CONTAINER] Status updated to: ${currentKaggleStatus.toUpperCase()}`, "sys");
+          if (currentStatus !== lastStatus) {
+            lastStatus = currentStatus;
+            appendLog(`[GITHUB RUNNER] Run #${run.id} Status: ${currentStatus.toUpperCase()}${conclusion ? ' (' + conclusion + ')' : ''}`, "sys");
 
-          if (currentKaggleStatus === "queued") {
-            appendLog("⏳ Kaggle scheduler: Container queued in GPU cluster, preparing T4 accelerator...", "info");
-          } else if (currentKaggleStatus === "running") {
-            appendLog("⚡ Kaggle container running on Tesla T4 GPU. Executing Kokoro TTS & NVIDIA vision pipeline...", "info");
-          } else if (currentKaggleStatus === "complete") {
-            appendLog("✅ Kaggle kernel execution complete!", "success");
-            clearInterval(kaggleWatcherInterval);
-            kaggleWatcherInterval = null;
-          } else if (currentKaggleStatus === "error" || currentKaggleStatus === "failed") {
-            appendLog(`⚠️ Kaggle worker stopped with status: ${currentKaggleStatus}. Failure: ${data.failureMessage || 'None'}`, "error");
-            clearInterval(kaggleWatcherInterval);
-            kaggleWatcherInterval = null;
+            if (currentStatus === "queued") {
+              appendLog("⏳ GitHub Actions: Runner queued, provisioning VM container...", "info");
+            } else if (currentStatus === "in_progress") {
+              appendLog("⚡ GitHub Actions: Ubuntu runner active! Executing Kokoro TTS & NVIDIA vision pipeline...", "info");
+            } else if (currentStatus === "completed") {
+              if (conclusion === "success") {
+                appendLog("✅ GitHub Actions runner execution finished successfully!", "success");
+              } else {
+                appendLog(`⚠️ GitHub Actions runner completed with conclusion: ${conclusion}`, "warn");
+              }
+              clearInterval(githubWatcherInterval);
+              githubWatcherInterval = null;
+            }
           }
         }
       }
     } catch (e) {
-      console.warn("Kaggle status poll notice:", e);
+      console.warn("GitHub Actions status poll notice:", e);
     }
-  }, 4500);
+  }, 4000);
 }
 
