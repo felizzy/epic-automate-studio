@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <!-- Firebase Modular SDK -->
-  <script type="module" src="app.js?v=20261122_kaggle"></script>
+  <script type="module" src="app.js?v=20261122_actions"></script>
 </head>
 <body class="ios-theme">
   <!-- Glassmorphic App Shell -->
@@ -22,8 +22,8 @@
           <span class="logo-spark">⚡</span>
         </div>
         <div class="app-title-box">
-          <h1 class="ios-app-title">Epic Automate <span class="tag-pro">T4 GPU</span></h1>
-          <p class="ios-app-subtitle">Kokoro TTS • NVIDIA Vision • Hugging Face Assets</p>
+          <h1 class="ios-app-title">Epic Automate <span class="tag-pro">GitHub Runner</span></h1>
+          <p class="ios-app-subtitle">Kokoro TTS • NVIDIA Vision • Hugging Face Assets • GitHub Actions</p>
         </div>
       </div>
 
@@ -225,7 +225,7 @@
         <div class="action-dock">
           <button type="button" id="btnLaunch" class="ios-btn ios-btn-primary">
             <span class="btn-icon">⚡</span>
-            <span>Launch Video Pipeline on Kaggle T4</span>
+            <span>Launch Video Pipeline on GitHub Actions</span>
           </button>
           <button type="button" id="btnCancel" class="ios-btn ios-btn-danger" disabled>
             <span class="btn-icon">⏹</span>
@@ -356,13 +356,15 @@
           <form id="settingsForm">
             <div class="ios-grid-two">
               <div class="form-field">
-                <label for="cfgKaggleUser">Kaggle Username</label>
-                <input type="text" id="cfgKaggleUser" class="ios-input" value="chikwasfelix" placeholder="e.g. chikwasfelix" required>
+                <label for="cfgGithubPat">GitHub Personal Access Token (PAT)</label>
+                <input type="password" id="cfgGithubPat" class="ios-input" value="" placeholder="ghp_..." required>
+                <span class="field-hint">Token with repo workflow dispatch access</span>
               </div>
 
               <div class="form-field">
-                <label for="cfgKaggleKey">Kaggle API Key</label>
-                <input type="password" id="cfgKaggleKey" class="ios-input" value="KGAT_338d2595814cc5a40e7404bc76cb35d4" placeholder="Kaggle API Token Key" required>
+                <label for="cfgGithubRepo">GitHub Repository</label>
+                <input type="text" id="cfgGithubRepo" class="ios-input" value="felizzy/epic-automate-studio" placeholder="owner/repo" required>
+                <span class="field-hint">Target repository hosting video_worker.yml</span>
               </div>
 
               <div class="form-field">
@@ -382,13 +384,13 @@
               </div>
 
               <div class="form-field">
-                <label for="cfgPexelsKey">Pexels API Key (Optional)</label>
-                <input type="password" id="cfgPexelsKey" class="ios-input" placeholder="Optional free Pexels key">
+                <label for="cfgKaggleUser">Kaggle Username (Optional)</label>
+                <input type="text" id="cfgKaggleUser" class="ios-input" value="chikwasfelix" placeholder="e.g. chikwasfelix">
               </div>
 
               <div class="form-field">
-                <label for="cfgUnsplashKey">Unsplash Access Key (Optional)</label>
-                <input type="password" id="cfgUnsplashKey" class="ios-input" placeholder="Optional free Unsplash key">
+                <label for="cfgKaggleKey">Kaggle API Key (Optional)</label>
+                <input type="password" id="cfgKaggleKey" class="ios-input" value="KGAT_338d2595814cc5a40e7404bc76cb35d4" placeholder="Kaggle API Token Key">
               </div>
             </div>
 
