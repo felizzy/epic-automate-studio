@@ -1,0 +1,224 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // This security rules file assumes the following data structures:
+    //
+    // Collection: users
+    // Document ID: {userId} (matches Firebase Auth UID)
+    // Fields:
+    //   - kaggle_username: string (optional, max 100 chars) - Kaggle account username
+    //   - kaggle_key: string (optional, max 256 chars) - Kaggle API token secret
+    //   - nvidia_api_key: string (optional, max 256 chars) - NVIDIA NIM / API secret key
+    //   - hf_token: string (optional, max 256 chars) - Hugging Face API access token
+    //   - hf_dataset_repo: string (optional, max 256 chars) - Hugging Face dataset target repository
+    //   - github_pat: string (optional, max 256 chars) - GitHub Personal Access Token
+    //   - email: string (optional, max 256 chars) - User account email address
+    //   - displayName: string (optional, max 128 chars) - Profile display name
+    //   - userId: string (optional, matches {userId}, immutable) - User UID
+    //   - uid: string (optional, matches {userId}, immutable) - User UID
+    //   - created_at / createdAt: string or timestamp (optional, max 64 chars) - Creation time
+    //   - updated_at / updatedAt: string or timestamp (optional, max 64 chars) - Last update time
+    //   - settings: map (optional, max 50 keys) - Custom user settings
+    //   - preferences: map (optional, max 50 keys) - UI / workflow preferences
+    //
+    // Collection: automations
+    // Document ID: {jobId} (e.g. job_1732288800123)
+    // Fields:
+    //   - job_id: string (optional, max 128 chars, immutable) - Job identifier
+    //   - jobId: string (optional, max 128 chars, immutable) - Job identifier alias
+    //   - title: string (optional, max 256 chars) - Automation title/descriptor
+    //   - payload: string or map (optional, max 65536 chars if string, max 100 keys if map) - Input parameters
+    //   - userId: string (required on create, max 128 chars, immutable) - Creator's Auth UID
+    //   - userEmail: string (optional, max 256 chars) - Creator email
+    //   - progress: number (optional, range 0 to 100) - Real-time execution progress %
+    //   - current_milestone: string (optional, max 1000 chars) - Live milestone step text
+    //   - status: string (required on create, enum: queued, running, completed, failed, cancelled) - Job state
+    //   - cancel_requested: bool (optional) - Immediate stop signal flag
+    //   - asset_url: string (optional, max 2048 chars) - Direct Hugging Face download URL
+    //   - asset_type: string (optional, max 50 chars) - Media format (video, audio, image, archive)
+    //   - logs: list (optional, max 500 entries) - Execution log entries
+    //   - created_at: string or timestamp (optional, max 64 chars, immutable) - Job creation timestamp
+    //   - updated_at: string or timestamp (optional, max 64 chars) - Last update timestamp
+    //   - settings: map (optional, max 50 keys) - Job-level configurations
+    //   - script: string (optional, max 65536 chars) - Generated or supplied video script
+    //   - sentences: list (optional, max 500 items) - Split script sentence chunks
+    //   - sentence_count: number (optional, range 0 to 500) - Total number of sentences
+    //   - voice: string (optional, max 100 chars) - TTS voice model identifier
+    //   - speed: number (optional, range 0.1 to 5.0) - Audio playback speed
+    //   - captions: bool, string, or list (optional) - Video subtitles/captions data
+    //   - sources: list or map (optional) - Media sources or background video assets
+    //   - nvidia_api_key: string (optional, max 256 chars) - Job-specific NVIDIA API key
+    //   - kaggle_user: string (optional, max 100 chars) - Worker Kaggle username
+    //   - hf_dataset_repo: string (optional, max 256 chars) - Target dataset repo
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Core Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ===============================================================
+    // Domain Validator: User Documents
+    // ===============================================================
+
+    function isValidUserDoc(data) {
+      return data.keys().hasOnly([
+        'kaggle_username', 'kaggle_key', 'nvidia_api_key', 'hf_token',
+        'hf_dataset_repo', 'github_pat', 'email', 'displayName',
+        'userId', 'uid', 'created_at', 'updated_at', 'createdAt', 'updatedAt',
+        'settings', 'preferences'
+      ]) &&
+      (!('kaggle_username' in data) || (data.kaggle_username is string && data.kaggle_username.size() <= 100)) &&
+      (!('kaggle_key' in data) || (data.kaggle_key is string && data.kaggle_key.size() <= 256)) &&
+      (!('nvidia_api_key' in data) || (data.nvidia_api_key is string && data.nvidia_api_key.size() <= 256)) &&
+      (!('hf_token' in data) || (data.hf_token is string && data.hf_token.size() <= 256)) &&
+      (!('hf_dataset_repo' in data) || (data.hf_dataset_repo is string && data.hf_dataset_repo.size() <= 256)) &&
+      (!('github_pat' in data) || (data.github_pat is string && data.github_pat.size() <= 256)) &&
+      (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+      (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128)) &&
+      (!('userId' in data) || (data.userId is string && data.userId.size() <= 128)) &&
+      (!('uid' in data) || (data.uid is string && data.uid.size() <= 128)) &&
+      (!('created_at' in data) || data.created_at is timestamp || (data.created_at is string && data.created_at.size() <= 64)) &&
+      (!('updated_at' in data) || data.updated_at is timestamp || (data.updated_at is string && data.updated_at.size() <= 64)) &&
+      (!('createdAt' in data) || data.createdAt is timestamp || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+      (!('updatedAt' in data) || data.updatedAt is timestamp || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+      (!('settings' in data) || (data.settings is map && data.settings.size() <= 50)) &&
+      (!('preferences' in data) || (data.preferences is map && data.preferences.size() <= 50));
+    }
+
+    // ===============================================================
+    // Domain Validator: Automation Job Documents
+    // ===============================================================
+
+    function isValidAutomationDoc(data) {
+      return data.keys().hasOnly([
+        'job_id', 'jobId', 'title', 'payload', 'userId', 'userEmail',
+        'progress', 'current_milestone', 'status', 'cancel_requested',
+        'asset_url', 'asset_type', 'logs', 'created_at', 'updated_at',
+        'settings', 'script', 'sentences', 'sentence_count', 'voice',
+        'speed', 'captions', 'sources', 'nvidia_api_key', 'kaggle_user',
+        'hf_dataset_repo'
+      ]) &&
+      // Status must match known workflow states
+      (!('status' in data) || (data.status is string && data.status in ['queued', 'running', 'completed', 'failed', 'cancelled', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'])) &&
+      // Progress percentage must be within 0..100
+      (!('progress' in data) || (data.progress is number && data.progress >= 0 && data.progress <= 100)) &&
+      // Immediate cancellation signal flag
+      (!('cancel_requested' in data) || data.cancel_requested is bool) &&
+      // Size limits for all strings and lists to prevent resource exhaustion / DoS
+      (!('job_id' in data) || (data.job_id is string && data.job_id.size() <= 128)) &&
+      (!('jobId' in data) || (data.jobId is string && data.jobId.size() <= 128)) &&
+      (!('title' in data) || (data.title is string && data.title.size() <= 256)) &&
+      (!('payload' in data) || (data.payload is string && data.payload.size() <= 65536) || (data.payload is map && data.payload.size() <= 100)) &&
+      (!('userId' in data) || (data.userId is string && data.userId.size() <= 128)) &&
+      (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 256)) &&
+      (!('current_milestone' in data) || (data.current_milestone is string && data.current_milestone.size() <= 1000)) &&
+      (!('asset_url' in data) || (data.asset_url is string && data.asset_url.size() <= 2048)) &&
+      (!('asset_type' in data) || (data.asset_type is string && data.asset_type.size() <= 50)) &&
+      (!('logs' in data) || (data.logs is list && data.logs.size() <= 500)) &&
+      (!('created_at' in data) || data.created_at is timestamp || (data.created_at is string && data.created_at.size() <= 64)) &&
+      (!('updated_at' in data) || data.updated_at is timestamp || (data.updated_at is string && data.updated_at.size() <= 64)) &&
+      (!('settings' in data) || (data.settings is map && data.settings.size() <= 50)) &&
+      // Video generator frontend fields
+      (!('script' in data) || (data.script is string && data.script.size() <= 65536)) &&
+      (!('sentences' in data) || (data.sentences is list && data.sentences.size() <= 500)) &&
+      (!('sentence_count' in data) || (data.sentence_count is number && data.sentence_count >= 0 && data.sentence_count <= 500)) &&
+      (!('voice' in data) || (data.voice is string && data.voice.size() <= 100)) &&
+      (!('speed' in data) || (data.speed is number && data.speed >= 0.1 && data.speed <= 5.0)) &&
+      (!('captions' in data) || data.captions is bool || (data.captions is string && data.captions.size() <= 65536) || (data.captions is list && data.captions.size() <= 500)) &&
+      (!('sources' in data) || (data.sources is list && data.sources.size() <= 500) || (data.sources is map && data.sources.size() <= 100)) &&
+      (!('nvidia_api_key' in data) || (data.nvidia_api_key is string && data.nvidia_api_key.size() <= 256)) &&
+      (!('kaggle_user' in data) || (data.kaggle_user is string && data.kaggle_user.size() <= 100)) &&
+      (!('hf_dataset_repo' in data) || (data.hf_dataset_repo is string && data.hf_dataset_repo.size() <= 256));
+    }
+
+    // ---------------------------------------------------------------
+    // Users Collection: Private user profile and sensitive secrets
+    // ---------------------------------------------------------------
+    match /users/{userId} {
+      // Strictly restricted to the owner: protects sensitive API keys (Kaggle, HF, NVIDIA)
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                    isValidUserDoc(request.resource.data) &&
+                    (!('userId' in request.resource.data) || request.resource.data.userId == userId) &&
+                    (!('uid' in request.resource.data) || request.resource.data.uid == userId);
+
+      allow update: if isOwner(userId) &&
+                    isValidUserDoc(request.resource.data) &&
+                    (!('userId' in resource.data) || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId) &&
+                    (!('uid' in resource.data) || !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid);
+
+      allow delete: if isOwner(userId);
+
+      // Subcollections scoped to the user (e.g. presets, histories)
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Automations Collection: Real-time execution jobs and milestones
+    // ---------------------------------------------------------------
+    match /automations/{jobId} {
+      // Single-document fetch (get): Authenticated owner or direct lookup via known job ID
+      // (allows unauthenticated Kaggle worker watchdog to poll cancellation via REST API)
+      allow get: if (isAuthenticated() && (resource.data.get('userId', null) == request.auth.uid || resource.data.get('userId', null) == null))
+                 || true;
+
+      // Collection queries (list): Strictly restricted to authenticated owner to prevent tenant enumeration
+      allow list: if isAuthenticated() && (resource.data.get('userId', null) == request.auth.uid || resource.data.get('userId', null) == null);
+
+      // Create: Authenticated user creating their own automation job
+      allow create: if isAuthenticated() &&
+                    request.resource.data.userId == request.auth.uid &&
+                    isValidAutomationDoc(request.resource.data);
+
+      // Update: Either Kaggle worker updating milestone/progress status fields,
+      // or authenticated owner updating cancel_requested / settings
+      allow update: if isValidAutomationDoc(request.resource.data) && (
+        // 1. Worker update via REST API (restricted strictly to execution progress & status fields)
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'progress', 'current_milestone', 'status', 'asset_url',
+          'asset_type', 'logs', 'updated_at', 'cancel_requested'
+        ]) ||
+        // 2. Authenticated Job Owner updating cancellation or settings
+        (
+          isAuthenticated() &&
+          (resource.data.get('userId', null) == request.auth.uid || resource.data.get('userId', null) == null) &&
+          // Protect immutable identity and creation fields
+          (!('userId' in resource.data) || request.resource.data.userId == resource.data.userId) &&
+          (!('job_id' in resource.data) || request.resource.data.job_id == resource.data.job_id) &&
+          (!('jobId' in resource.data) || request.resource.data.jobId == resource.data.jobId) &&
+          (!('created_at' in resource.data) || request.resource.data.created_at == resource.data.created_at)
+        )
+      );
+
+      // Delete: Restricted strictly to the job owner
+      allow delete: if isAuthenticated() &&
+                       resource.data.get('userId', null) != null &&
+                       resource.data.userId == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // Default Deny: All other paths are strictly locked down
+    // ---------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
