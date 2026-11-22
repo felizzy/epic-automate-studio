@@ -45,7 +45,7 @@
 - **2026-11-22**: Authored production Kaggle T4 worker (`kaggle_executor.py`) with sentence splitting, Kokoro-82M TTS, unique image fetching, FFmpeg dynamic subtitle burn-in, video concatenation, Hugging Face dataset upload, and Firestore cancellation watchdog.
 - **2026-11-22**: Delegated and validated Cloud Firestore Security Rules (`firestore.rules`) with strict multitenant user isolation and Kaggle worker status updates.
 - **2026-11-22**: Resolved "Launch button not working" issue: updated `firestore.rules` to permit `captions` map and nullable `asset_url` and `asset_type`. Deployed updated rules.
-- **2026-11-22**: Integrated interactive pipeline simulation runner in `public/app.js` with real-time milestone streaming, dynamic progress progression (0% → 100%), and automatic transition to master media player preview. Added cache-busting to `public/index.html`.
+- **2026-11-22**: Integrated direct Kaggle T4 GPU compute trigger into frontend: Launch button now directly packages and pushes the worker kernel via Kaggle REST API (`POST https://www.kaggle.com/api/v1/kernels/push`) with Bearer token authentication (`KGAT_...`) and automatic runtime parameter injection (`JOB_ID`, `HF_TOKEN`, `NVIDIA_API_KEY`). Added real-time Kaggle container status watchdog polling (`GET /api/v1/kernels/status`) and synchronized Firestore real-time progress.
 
 ---
 
