@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
 """
 =============================================================================
-Epic Automate - Kaggle T4 / Cloud Video Pipeline Worker
-=============================================================================
-Features:
-1. Kokoro-82M Text-to-Speech (High fidelity open weights <500MB)
-2. NVIDIA Reasoning Model (nvidia/nemotron-3.5-bolt-e4b) for Visual Photography Keywords
-3. Multi-source Real Photography Retriever (Wikimedia File API, Wikipedia REST,
-   DuckDuckGo Image API, Picsum Photography Stream, Curated HD Photography)
-   - Guaranteed 100% Unique Real Photography across every scene (Never synthetic gradients)
-4. FFmpeg Scene Assembler with Ken Burns Pan/Zoom & Dynamic Burn-in Subtitles
-5. Master 1080p Video Concatenation
-6. Real-time Firestore Telemetry Reporting & Cancellation Watchdog
-7. Hugging Face Datasets Master Video Storage & Direct Asset Preview
+Epic Automate - Cloud Video Pipeline Worker
 =============================================================================
 """
 
@@ -34,9 +23,6 @@ from typing import List, Dict, Optional, Tuple
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("epic_video_worker")
 
-# =============================================================================
-# Configuration & Environment
-# =============================================================================
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "epic-studio-94147")
 JOB_ID = os.environ.get("JOB_ID", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
@@ -163,11 +149,7 @@ CURATED_STOCK_PHOTOS = [
     "https://images.unsplash.com/photo-1507499739999-097706ad8914?auto=format&fit=crop&w=1920&q=80",
     "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1920&q=80",
     "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1516339901601-2e1b62dc0c45?auto=format&fit=crop&w=1920&q=80"
+    "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1920&q=80"
 ]
 
 def download_and_crop_image(url: str, dest_path: str) -> bool:
@@ -208,56 +190,70 @@ def download_and_crop_image(url: str, dest_path: str) -> bool:
 
 def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx: int) -> str:
     out_path = f"scene_{scene_idx:03d}.jpg"
-    terms = [w.strip() for w in re.sub(r'[^\w\s]', '', query).split() if len(w) > 2]
-    if not terms: terms = ["landscape", "nature"]
-    logger.info(f"[IMAGE RETRIEVAL] Scene {scene_idx+1} search terms: {terms}")
+    raw_words = [w.strip() for w in re.sub(r'[^\w\s]', '', query).split() if len(w) > 2]
+    stop_adjectives = {"deep", "quiet", "silent", "massive", "ancient", "incandescent", "every", "all", "our", "their"}
+    blacklist_terms = ["diagram", "chart", "graph", "schematic", "map", "drawing", "illustration", "icon", "logo", "learning", "slide", "table", "code", "svg", "portrait"]
+
+    phrases = []
+    if len(raw_words) >= 2: phrases.append(f"{raw_words[0]} {raw_words[1]}")
+    if len(raw_words) >= 3: phrases.append(f"{raw_words[1]} {raw_words[2]}")
+    strong_nouns = [w for w in raw_words if w.lower() not in stop_adjectives]
+    if len(strong_nouns) >= 2: phrases.append(f"{strong_nouns[0]} {strong_nouns[1]}")
+    for n in strong_nouns:
+        if n not in phrases: phrases.append(n)
+    if not phrases: phrases = ["galaxy space", "nebula stars", "nature landscape"]
+
+    logger.info(f"[IMAGE RETRIEVAL] Scene {scene_idx+1} search phrases: {phrases}")
 
     # Source A: Wikimedia Commons File Search
-    for term in terms:
+    for phrase in phrases:
         try:
             wm_url = (
                 f"https://commons.wikimedia.org/w/api.php?action=query&generator=search"
-                f"&gsrsearch={urllib.parse.quote(term)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=url|mime|size&format=json"
+                f"&gsrsearch={urllib.parse.quote(phrase)}&gsrnamespace=6&gsrlimit=12&prop=imageinfo&iiprop=url|mime|size&format=json"
             )
             req = urllib.request.Request(wm_url, headers={"User-Agent": "EpicAutomateStudio/2.0 (admin@epicstudio.org)"})
             with urllib.request.urlopen(req, timeout=6) as res:
                 data = json.loads(res.read().decode())
                 pages = data.get("query", {}).get("pages", {})
                 for _, info in pages.items():
+                    title = (info.get("title") or "").lower()
+                    if any(b in title for b in blacklist_terms): continue
                     img_info = info.get("imageinfo", [{}])[0]
                     img_url = img_info.get("url")
                     mime = img_info.get("mime", "").lower()
-                    width = img_info.get("width", 0)
-                    height = img_info.get("height", 0)
+                    width, height = img_info.get("width", 0), img_info.get("height", 0)
                     if img_url and ("jpeg" in mime or "png" in mime or "jpg" in img_url.lower()):
-                        if width >= 600 or height >= 600:
+                        if width >= 800 or height >= 600:
                             if img_url not in USED_IMAGE_URLS:
                                 if download_and_crop_image(img_url, out_path):
                                     USED_IMAGE_URLS.add(img_url)
-                                    logger.info(f"[SOURCE: WIKIMEDIA COMMONS] Scene {scene_idx+1} matched '{term}': {img_url}")
+                                    logger.info(f"[SOURCE: WIKIMEDIA COMMONS] Scene {scene_idx+1} matched '{phrase}' ({title}): {img_url}")
                                     return out_path
         except Exception as e:
             logger.debug(f"Wikimedia API notice: {e}")
 
     # Source B: Wikipedia Summary REST API
-    for term in terms:
+    for noun in strong_nouns:
         try:
-            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(term.capitalize())}"
+            wiki_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(noun.capitalize())}"
             req = urllib.request.Request(wiki_url, headers={"User-Agent": "EpicAutomateStudio/2.0 (admin@epicstudio.org)"})
             with urllib.request.urlopen(req, timeout=5) as res:
                 data = json.loads(res.read().decode())
                 orig = data.get("originalimage", {}).get("source")
+                title = (data.get("title") or "").lower()
+                if any(b in title for b in blacklist_terms): continue
                 if orig and orig not in USED_IMAGE_URLS:
                     if download_and_crop_image(orig, out_path):
                         USED_IMAGE_URLS.add(orig)
-                        logger.info(f"[SOURCE: WIKIPEDIA SUMMARY] Scene {scene_idx+1} matched '{term}': {orig}")
+                        logger.info(f"[SOURCE: WIKIPEDIA SUMMARY] Scene {scene_idx+1} matched '{noun}': {orig}")
                         return out_path
         except Exception as e:
             logger.debug(f"Wikipedia REST notice: {e}")
 
     # Source C: DuckDuckGo Real Image API
     try:
-        combined_q = " ".join(terms[:3])
+        combined_q = phrases[0] if phrases else "deep space galaxy"
         token_url = f"https://duckduckgo.com/?q={urllib.parse.quote(combined_q + ' photography')}"
         t_req = urllib.request.Request(token_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
         with urllib.request.urlopen(t_req, timeout=5) as res:
@@ -270,6 +266,8 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
             with urllib.request.urlopen(i_req, timeout=5) as res:
                 img_data = json.loads(res.read().decode())
                 for r in img_data.get("results", []):
+                    title = (r.get("title") or "").lower()
+                    if any(b in title for b in blacklist_terms): continue
                     img_url = r.get("image")
                     if img_url and img_url not in USED_IMAGE_URLS and not img_url.endswith(".svg"):
                         if download_and_crop_image(img_url, out_path):
@@ -289,7 +287,6 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
     except Exception as e:
         logger.debug(f"Picsum stream notice: {e}")
 
-    # Source E: Curated High-Definition Photography Catalog
     fallback_url = CURATED_STOCK_PHOTOS[scene_idx % len(CURATED_STOCK_PHOTOS)]
     logger.info(f"[SOURCE: CURATED HD PHOTO] Scene {scene_idx+1} fetching authentic stock photo: {fallback_url}")
     download_and_crop_image(fallback_url, out_path)
