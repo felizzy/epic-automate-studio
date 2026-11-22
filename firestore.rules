@@ -127,8 +127,8 @@ service cloud.firestore {
       (!('userId' in data) || (data.userId is string && data.userId.size() <= 128)) &&
       (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 256)) &&
       (!('current_milestone' in data) || (data.current_milestone is string && data.current_milestone.size() <= 1000)) &&
-      (!('asset_url' in data) || (data.asset_url is string && data.asset_url.size() <= 2048)) &&
-      (!('asset_type' in data) || (data.asset_type is string && data.asset_type.size() <= 50)) &&
+      (!('asset_url' in data) || data.asset_url == null || (data.asset_url is string && data.asset_url.size() <= 2048)) &&
+      (!('asset_type' in data) || data.asset_type == null || (data.asset_type is string && data.asset_type.size() <= 50)) &&
       (!('logs' in data) || (data.logs is list && data.logs.size() <= 500)) &&
       (!('created_at' in data) || data.created_at is timestamp || (data.created_at is string && data.created_at.size() <= 64)) &&
       (!('updated_at' in data) || data.updated_at is timestamp || (data.updated_at is string && data.updated_at.size() <= 64)) &&
@@ -139,7 +139,7 @@ service cloud.firestore {
       (!('sentence_count' in data) || (data.sentence_count is number && data.sentence_count >= 0 && data.sentence_count <= 500)) &&
       (!('voice' in data) || (data.voice is string && data.voice.size() <= 100)) &&
       (!('speed' in data) || (data.speed is number && data.speed >= 0.1 && data.speed <= 5.0)) &&
-      (!('captions' in data) || data.captions is bool || (data.captions is string && data.captions.size() <= 65536) || (data.captions is list && data.captions.size() <= 500)) &&
+      (!('captions' in data) || data.captions is map || data.captions is bool || (data.captions is string && data.captions.size() <= 65536) || (data.captions is list && data.captions.size() <= 500)) &&
       (!('sources' in data) || (data.sources is list && data.sources.size() <= 500) || (data.sources is map && data.sources.size() <= 100)) &&
       (!('nvidia_api_key' in data) || (data.nvidia_api_key is string && data.nvidia_api_key.size() <= 256)) &&
       (!('kaggle_user' in data) || (data.kaggle_user is string && data.kaggle_user.size() <= 100)) &&
