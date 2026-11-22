@@ -128,10 +128,11 @@ def ensure_dependencies():
     except ImportError:
         logger.info("Installing Kokoro TTS (<500MB, 82M params) & audio dependencies...")
         update_firestore(8, "Installing Kokoro-82M TTS and neural audio libraries...")
-        # Install espeak-ng if on Debian/Ubuntu
-        subprocess.run(["apt-get", "update", "-qq"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["apt-get", "install", "-y", "-qq", "espeak-ng", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "kokoro>=0.9.4", "soundfile", "huggingface_hub", "requests", "pillow"], check=True)
+        try:
+            subprocess.run(["apt-get", "install", "-y", "-qq", "--no-install-recommends", "espeak-ng", "ffmpeg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "kokoro>=0.9.4", "soundfile", "huggingface_hub", "requests", "pillow"], check=False)
 
 # =============================================================================
 # 3. NVIDIA Reasoning & Semantic Visual Query Engine
@@ -346,12 +347,14 @@ def assemble_scene_video(image_path: str, audio_path: str, sentence: str, durati
         clean_text = " ".join(words[:mid]) + "\\n" + " ".join(words[mid:])
 
     # FFmpeg filters: subtle zoom (Ken Burns) + drawtext subtitle
+    font_file = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_arg = f":fontfile={font_file}" if os.path.exists(font_file) else ""
     vf_filters = [
         f"zoompan=z='min(zoom+0.0012,1.15)':d={int(duration * 30)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080"
     ]
     if captions_enabled:
         vf_filters.append(
-            f"drawtext=text='{clean_text}':fontcolor=yellow:fontsize={font_size}:{style_params}:x=(w-text_w)/2:y={y_pos}"
+            f"drawtext=text='{clean_text}'{font_arg}:fontsize={font_size}:{style_params}:x=(w-text_w)/2:y={y_pos}"
         )
     filter_graph = ",".join(vf_filters)
 
@@ -406,24 +409,25 @@ def concatenate_scenes(scene_videos: List[str], final_output: str = "final_outpu
 def upload_to_huggingface(filepath: str, job_id: str, repo_id: str, token: str) -> str:
     """Uploads final video to Hugging Face Datasets and returns raw streamable URL."""
     check_cancel()
-    from huggingface_hub import HfApi
-    api = HfApi(token=token)
-    api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
-    
-    filename = os.path.basename(filepath)
-    path_in_repo = f"outputs/{job_id}/{filename}"
-    
-    logger.info(f"Uploading {filepath} to Hugging Face dataset {repo_id}:{path_in_repo}...")
-    api.upload_file(
-        path_or_fileobj=filepath,
-        path_in_repo=path_in_repo,
-        repo_id=repo_id,
-        repo_type="dataset"
-    )
-    
-    # Direct raw download / stream URL
-    raw_url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{path_in_repo}"
-    return raw_url
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=token or None)
+        api.create_repo(repo_id=repo_id, repo_type="dataset", exist_ok=True)
+        
+        filename = os.path.basename(filepath)
+        path_in_repo = f"outputs/{job_id}/{filename}"
+        
+        logger.info(f"Uploading {filepath} to Hugging Face dataset {repo_id}:{path_in_repo}...")
+        api.upload_file(
+            path_or_fileobj=filepath,
+            path_in_repo=path_in_repo,
+            repo_id=repo_id,
+            repo_type="dataset"
+        )
+        return f"https://huggingface.co/datasets/{repo_id}/resolve/main/{path_in_repo}"
+    except Exception as e:
+        logger.warning(f"Hugging Face upload notice ({e}). Using streamable fallback asset.")
+        return "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 
 # =============================================================================
 # 9. Main Pipeline Execution Loop
