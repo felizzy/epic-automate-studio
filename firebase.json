@@ -1,0 +1,32 @@
+﻿{
+    "firestore":  {
+                      "indexes":  "firestore.indexes.json",
+                      "rules":  "firestore.rules"
+                  },
+    "hosting":  {
+                    "ignore":  [
+                                   "firebase.json",
+                                   "**/.*",
+                                   "**/node_modules/**"
+                               ],
+                    "public":  "public",
+                    "rewrites":  [
+                                     {
+                                         "destination":  "/index.html",
+                                         "source":  "**"
+                                     }
+                                 ]
+                },
+    "auth":  {
+                 "providers":  {
+                                   "googleSignIn":  {
+                                                        "authorizedRedirectUris":  [
+                                                                                       "https://epic-studio-94147.firebaseapp.com/__/auth/handler"
+                                                                                   ],
+                                                        "supportEmail":  "ebiringai@gmail.com",
+                                                        "oAuthBrandDisplayName":  "Epic Automate Studio"
+                                                    },
+                                   "emailPassword":  true
+                               }
+             }
+}
