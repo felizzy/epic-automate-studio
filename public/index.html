@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Epic Automate Studio ⚡</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Firebase Modular SDK -->
+  <script type="module" src="app.js"></script>
+</head>
+<body class="ios-theme">
+  <!-- Glassmorphic App Shell -->
+  <div class="ios-app-container">
+    
+    <!-- Top Navigation & Dynamic Island Header -->
+    <header class="ios-nav-header">
+      <div class="brand-group">
+        <div class="app-logo-badge">
+          <span class="logo-spark">⚡</span>
+        </div>
+        <div class="app-title-box">
+          <h1 class="ios-app-title">Epic Automate <span class="tag-pro">T4 GPU</span></h1>
+          <p class="ios-app-subtitle">Kokoro TTS • NVIDIA Vision • Hugging Face Assets</p>
+        </div>
+      </div>
+
+      <!-- Live Connection / User Pill -->
+      <div class="header-right">
+        <div class="ios-status-pill" id="statusPill">
+          <span class="status-indicator-dot online"></span>
+          <span id="statusPillLabel">Connected</span>
+        </div>
+        <div class="user-avatar-badge" id="userAvatarBadge" title="Click to view profile">
+          <span id="userInitial">E</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- iOS Segmented Control Tab Bar -->
+    <nav class="ios-segmented-bar">
+      <button class="seg-btn active" data-tab="studio">
+        <span class="seg-icon">✨</span>
+        <span class="seg-label">Studio</span>
+      </button>
+      <button class="seg-btn" data-tab="logs">
+        <span class="seg-icon">⚡</span>
+        <span class="seg-label">Live Monitor</span>
+        <span class="badge-dot" id="logBadgeDot" style="display: none;"></span>
+      </button>
+      <button class="seg-btn" data-tab="settings">
+        <span class="seg-icon">⚙️</span>
+        <span class="seg-label">Settings</span>
+      </button>
+    </nav>
+
+    <!-- MAIN VIEW CONTAINER -->
+    <main class="ios-view-container">
+
+      <!-- ========================================== -->
+      <!-- TAB 1: STUDIO                              -->
+      <!-- ========================================== -->
+      <section id="tab-studio" class="tab-pane active">
+        
+        <!-- Video Script Builder Card -->
+        <div class="ios-card glass-panel studio-card">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">🎬</span>
+              <div>
+                <h2 class="card-heading">Video Script & Storyboard</h2>
+                <p class="card-subheading">Sentences are split at full stops; each receives an audio clip & unique AI-reasoned visual.</p>
+              </div>
+            </div>
+            <div class="script-stats">
+              <span class="stat-pill"><span id="sentenceCount">0</span> Sentences</span>
+              <span class="stat-pill"><span id="estDuration">~0s</span> Video</span>
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label for="videoTitle">Video Project Title</label>
+            <input type="text" id="videoTitle" class="ios-input" placeholder="e.g. The Secrets of the Cosmic Void" value="The Origin of the Stars">
+          </div>
+
+          <div class="form-field">
+            <div class="label-row">
+              <label for="videoScript">Script Content (Splits automatically on full stops)</label>
+              <button type="button" class="btn-micro" id="btnLoadExample">Load Sample Script</button>
+            </div>
+            <textarea id="videoScript" class="ios-textarea" rows="5" placeholder="Write or paste your script here. Every sentence ending in a period creates an individual scene..."></textarea>
+          </div>
+        </div>
+
+        <!-- Generation Presets & Audio Voice Selector -->
+        <div class="ios-grid-two">
+          
+          <!-- Kokoro TTS Voice Model Card -->
+          <div class="ios-card glass-panel">
+            <div class="card-title-row">
+              <div class="title-with-icon">
+                <span class="card-icon">🎙️</span>
+                <div>
+                  <h3 class="card-heading">Kokoro TTS Model</h3>
+                  <p class="card-subheading">High-fidelity 82M open-weight model (&lt;500MB)</p>
+                </div>
+              </div>
+              <span class="badge-mini badge-green">82M Params</span>
+            </div>
+
+            <div class="form-field">
+              <label for="voiceSelect">Select Voice Character</label>
+              <select id="voiceSelect" class="ios-select">
+                <optgroup label="🇺🇸 American English (Female)">
+                  <option value="af_heart" selected>af_heart (Warm, Expressive & Natural)</option>
+                  <option value="af_bella">af_bella (Friendly & Clear)</option>
+                  <option value="af_sarah">af_sarah (Professional Narration)</option>
+                  <option value="af_alloy">af_alloy (Modern & Crisp)</option>
+                  <option value="af_nicole">af_nicole (Calm & Gentle)</option>
+                  <option value="af_sky">af_sky (Dynamic & Upbeat)</option>
+                </optgroup>
+                <optgroup label="🇺🇸 American English (Male)">
+                  <option value="am_adam">am_adam (Authoritative & Deep)</option>
+                  <option value="am_michael">am_michael (Warm Storyteller)</option>
+                  <option value="am_fenrir">am_fenrir (Epic Trailer Voice)</option>
+                  <option value="am_onyx">am_onyx (Rich Documentary Tone)</option>
+                  <option value="am_echo">am_echo (Smooth & Modern)</option>
+                </optgroup>
+                <optgroup label="🇬🇧 British English">
+                  <option value="bf_emma">bf_emma (British Female - Eloquent)</option>
+                  <option value="bf_isabella">bf_isabella (British Female - Classic)</option>
+                  <option value="bm_george">bm_george (British Male - Dignified)</option>
+                  <option value="bm_daniel">bm_daniel (British Male - Conversational)</option>
+                </optgroup>
+              </select>
+            </div>
+
+            <div class="form-field">
+              <div class="label-row">
+                <label for="voiceSpeed">Narration Speed: <span id="speedVal">1.0x</span></label>
+              </div>
+              <input type="range" id="voiceSpeed" class="ios-slider" min="0.8" max="1.3" step="0.05" value="1.0">
+            </div>
+          </div>
+
+          <!-- Caption & Subtitle Presets Card -->
+          <div class="ios-card glass-panel">
+            <div class="card-title-row">
+              <div class="title-with-icon">
+                <span class="card-icon">💬</span>
+                <div>
+                  <h3 class="card-heading">Dynamic Captions</h3>
+                  <p class="card-subheading">Word-level or sentence burn-in styling</p>
+                </div>
+              </div>
+              
+              <!-- iOS Toggle Switch -->
+              <label class="ios-switch">
+                <input type="checkbox" id="toggleCaptions" checked>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div id="captionControls" class="caption-options-grid">
+              <div class="form-field">
+                <label for="captionPosition">Vertical Position</label>
+                <select id="captionPosition" class="ios-select">
+                  <option value="bottom" selected>Bottom (Standard Video - 85%)</option>
+                  <option value="middle">Center Focus (TikTok / Reels - 50%)</option>
+                  <option value="top">Top Header (15%)</option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label for="captionSize">Font Size</label>
+                <select id="captionSize" class="ios-select">
+                  <option value="small">Small (28px - Subtitle)</option>
+                  <option value="medium" selected>Medium (38px - Viral Hook)</option>
+                  <option value="large">Large (48px - Bold Punchy)</option>
+                </select>
+              </div>
+
+              <div class="form-field full-width">
+                <label for="captionStyle">Visual Preset Theme</label>
+                <select id="captionStyle" class="ios-select">
+                  <option value="bold_yellow" selected>⚡ Bold Yellow Text with Black Stroke</option>
+                  <option value="frosted_box">🧊 Apple Frosted Glass Pill Background</option>
+                  <option value="minimal_white">✨ Pure White with Soft Drop Shadow</option>
+                  <option value="gradient_neon">🔥 Cyber Neon Gradient Accent</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- AI Visual Reasoning & Stock Sources -->
+        <div class="ios-card glass-panel">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">🧠</span>
+              <div>
+                <h3 class="card-heading">Visual Reasoning & Image Sources</h3>
+                <p class="card-subheading">NVIDIA's latest reasoning model translates semantic meaning into visual search queries</p>
+              </div>
+            </div>
+            <span class="badge-mini badge-purple">NVIDIA NIM</span>
+          </div>
+
+          <div class="stock-sources-container">
+            <span class="sources-label">Active Image Providers (Guaranteed Unique Images):</span>
+            <div class="source-chips">
+              <label class="source-chip"><input type="checkbox" checked value="pexels" id="srcPexels"> <span>Pexels HD</span></label>
+              <label class="source-chip"><input type="checkbox" checked value="unsplash" id="srcUnsplash"> <span>Unsplash</span></label>
+              <label class="source-chip"><input type="checkbox" checked value="pixabay" id="srcPixabay"> <span>Pixabay</span></label>
+              <label class="source-chip"><input type="checkbox" checked value="wikimedia" id="srcWikimedia"> <span>Wikimedia Commons</span></label>
+              <label class="source-chip"><input type="checkbox" checked value="duckduckgo" id="srcDDG"> <span>Web Instant Search</span></label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Row: Launch & Interruptible Cancellation -->
+        <div class="action-dock">
+          <button type="button" id="btnLaunch" class="ios-btn ios-btn-primary">
+            <span class="btn-icon">⚡</span>
+            <span>Launch Video Pipeline on Kaggle T4</span>
+          </button>
+          <button type="button" id="btnCancel" class="ios-btn ios-btn-danger" disabled>
+            <span class="btn-icon">⏹</span>
+            <span>Cancel Execution</span>
+          </button>
+        </div>
+
+        <!-- Output / Media Player Card -->
+        <div id="mediaOutputCard" class="ios-card glass-panel output-panel" style="display: none;">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">🎉</span>
+              <div>
+                <h3 class="card-heading">Final Video Rendered Successfully</h3>
+                <p class="card-subheading">Stored on Hugging Face Datasets with zero cloud egress fees</p>
+              </div>
+            </div>
+            <span class="badge-mini badge-green">Complete 100%</span>
+          </div>
+
+          <!-- Video Player -->
+          <div class="video-wrapper">
+            <video id="finalVideoPlayer" controls playsinline preload="metadata">
+              Your browser does not support the video tag.
+            </video>
+          </div>
+
+          <!-- Asset Link & Actions -->
+          <div class="asset-url-bar">
+            <input type="text" id="finalAssetUrl" class="ios-input" readonly>
+            <button type="button" id="btnCopyAssetUrl" class="ios-btn ios-btn-secondary">
+              📋 Copy Link
+            </button>
+            <a id="btnDownloadVideo" href="#" target="_blank" download class="ios-btn ios-btn-secondary">
+              ⬇ Download
+            </a>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ========================================== -->
+      <!-- TAB 2: LIVE MONITOR & LOGS                 -->
+      <!-- ========================================== -->
+      <section id="tab-logs" class="tab-pane">
+        
+        <!-- Live Progress Status Card -->
+        <div class="ios-card glass-panel">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">📊</span>
+              <div>
+                <h2 class="card-heading">Live Pipeline Telemetry</h2>
+                <p class="card-subheading" id="jobIdLabel">Awaiting job trigger...</p>
+              </div>
+            </div>
+            <div class="progress-pct-badge" id="progressNumber">0%</div>
+          </div>
+
+          <!-- iOS Smooth Progress Bar -->
+          <div class="ios-progress-track">
+            <div class="ios-progress-fill" id="progressFill" style="width: 0%;"></div>
+          </div>
+
+          <!-- Milestone Pulse Banner -->
+          <div class="milestone-banner" id="milestoneBanner">
+            <span class="pulse-ring"></span>
+            <span id="milestoneText">System idle. Ready to process script.</span>
+          </div>
+        </div>
+
+        <!-- Terminal Console Card -->
+        <div class="ios-card glass-panel terminal-card">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">💻</span>
+              <div>
+                <h3 class="card-heading">Execution Console & Watchdog Logs</h3>
+                <p class="card-subheading">Streaming in real-time from Firestore & Kaggle Worker</p>
+              </div>
+            </div>
+            <div class="terminal-actions">
+              <button type="button" class="btn-micro" id="btnCopyLogs">Copy Logs</button>
+              <button type="button" class="btn-micro" id="btnClearLogs">Clear</button>
+            </div>
+          </div>
+
+          <div class="terminal-window" id="terminalOutput">
+            <div class="term-line sys"><span class="term-time">[SYSTEM]</span> Epic Automate telemetry initialized.</div>
+            <div class="term-line sys"><span class="term-time">[SYSTEM]</span> Firestore real-time listener armed.</div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ========================================== -->
+      <!-- TAB 3: SETTINGS & PERSISTENT CREDENTIALS   -->
+      <!-- ========================================== -->
+      <section id="tab-settings" class="tab-pane">
+        
+        <!-- User Profile Card -->
+        <div class="ios-card glass-panel">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <div class="user-large-avatar" id="userLargeAvatar">E</div>
+              <div>
+                <h2 class="card-heading" id="userProfileEmail">ebiringai@gmail.com</h2>
+                <p class="card-subheading" id="userProfileUid">UID: Loading...</p>
+              </div>
+            </div>
+            <button type="button" id="btnSignOut" class="ios-btn ios-btn-ghost">Sign Out</button>
+          </div>
+        </div>
+
+        <!-- Persistent Credentials Form -->
+        <div class="ios-card glass-panel">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">🔐</span>
+              <div>
+                <h3 class="card-heading">User Settings & Cloud Credentials</h3>
+                <p class="card-subheading">Stored persistently per user in Cloud Firestore (/users/{userId})</p>
+              </div>
+            </div>
+            <span class="badge-mini badge-green">Multitenant Encrypted</span>
+          </div>
+
+          <form id="settingsForm">
+            <div class="ios-grid-two">
+              <div class="form-field">
+                <label for="cfgKaggleUser">Kaggle Username</label>
+                <input type="text" id="cfgKaggleUser" class="ios-input" value="chikwasfelix" placeholder="e.g. chikwasfelix" required>
+              </div>
+
+              <div class="form-field">
+                <label for="cfgKaggleKey">Kaggle API Key</label>
+                <input type="password" id="cfgKaggleKey" class="ios-input" value="KGAT_338d2595814cc5a40e7404bc76cb35d4" placeholder="Kaggle API Token Key" required>
+              </div>
+
+              <div class="form-field">
+                <label for="cfgNvidiaKey">NVIDIA NIM API Key</label>
+                <input type="password" id="cfgNvidiaKey" class="ios-input" placeholder="nvapi-..." value="">
+                <span class="field-hint">Leave blank to use intelligent semantic reasoning fallback.</span>
+              </div>
+
+              <div class="form-field">
+                <label for="cfgHfToken">Hugging Face Token (Write Scope)</label>
+                <input type="password" id="cfgHfToken" class="ios-input" value="" placeholder="hf_..." required>
+              </div>
+
+              <div class="form-field full-width">
+                <label for="cfgHfRepo">Hugging Face Dataset Repository</label>
+                <input type="text" id="cfgHfRepo" class="ios-input" value="felizzy/epic-automation-assets" placeholder="username/dataset-repo">
+              </div>
+
+              <div class="form-field">
+                <label for="cfgPexelsKey">Pexels API Key (Optional)</label>
+                <input type="password" id="cfgPexelsKey" class="ios-input" placeholder="Optional free Pexels key">
+              </div>
+
+              <div class="form-field">
+                <label for="cfgUnsplashKey">Unsplash Access Key (Optional)</label>
+                <input type="password" id="cfgUnsplashKey" class="ios-input" placeholder="Optional free Unsplash key">
+              </div>
+            </div>
+
+            <div class="settings-action-row">
+              <button type="submit" id="btnSaveSettings" class="ios-btn ios-btn-primary">
+                💾 Save Settings to Cloud Firestore
+              </button>
+              <span id="saveStatusToast" class="save-toast" style="display: none;">Saved successfully!</span>
+            </div>
+          </form>
+        </div>
+
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- ========================================== -->
+  <!-- AUTHENTICATION MODAL (MULTITENANT SIGN-IN) -->
+  <!-- ========================================== -->
+  <div id="authModal" class="ios-modal-backdrop" style="display: none;">
+    <div class="ios-modal-card">
+      <div class="auth-header">
+        <div class="auth-icon-circle">⚡</div>
+        <h2 class="auth-title">Welcome to Epic Studio</h2>
+        <p class="auth-subtitle">Sign in to access your persistent AI video generation workspace.</p>
+      </div>
+
+      <!-- Google Sign In Button -->
+      <button type="button" id="btnGoogleSignIn" class="google-sign-in-btn">
+        <svg class="google-icon" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+        </svg>
+        <span>Continue with Google</span>
+      </button>
+
+      <div class="auth-divider">
+        <span>or sign in with email</span>
+      </div>
+
+      <form id="emailAuthForm">
+        <div class="form-field">
+          <label for="authEmail">Email Address</label>
+          <input type="email" id="authEmail" class="ios-input" value="ebiringai@gmail.com" required>
+        </div>
+
+        <div class="form-field">
+          <label for="authPassword">Password</label>
+          <input type="password" id="authPassword" class="ios-input" value="Airpyk98" required>
+        </div>
+
+        <div id="authErrorMessage" class="auth-error-msg" style="display: none;"></div>
+
+        <button type="submit" id="btnEmailSignIn" class="ios-btn ios-btn-primary full-width">
+          Sign In
+        </button>
+
+        <div class="auth-switch-row">
+          <button type="button" id="btnToggleAuthMode" class="btn-text">Need an account? Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</body>
+</html>
