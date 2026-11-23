@@ -27,6 +27,21 @@ on:
         required: false
         default: ""
         type: string
+      use_ai_generator:
+        description: "Use AI Image Generator (Kie.ai Z-Image)"
+        required: false
+        default: "false"
+        type: string
+      image_style:
+        description: "AI Image Art Style"
+        required: false
+        default: "hyper realistic"
+        type: string
+      kie_api_key:
+        description: "Kie.ai Bearer API Key"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   render_video:
@@ -60,5 +75,8 @@ jobs:
           HF_DATASET_REPO: ${{ github.event.inputs.hf_dataset_repo }}
           HF_TOKEN: ${{ github.event.inputs.hf_token }}
           NVIDIA_API_KEY: ${{ github.event.inputs.nvidia_api_key }}
+          USE_AI_GENERATOR: ${{ github.event.inputs.use_ai_generator }}
+          IMAGE_STYLE: ${{ github.event.inputs.image_style }}
+          KIE_API_KEY: ${{ github.event.inputs.kie_api_key }}
         run: |
           python pipeline_executor.py
