@@ -43,6 +43,9 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_DATASET_REPO = os.environ.get("HF_DATASET_REPO", "felizzy/epic-automation-assets")
 DEFAULT_NVIDIA_KEY = "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"
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "") or DEFAULT_NVIDIA_KEY
+USE_AI_GENERATOR = os.environ.get("USE_AI_GENERATOR", "false").lower() == "true"
+IMAGE_STYLE = os.environ.get("IMAGE_STYLE", "hyper realistic")
+KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
 
 if not JOB_ID:
     logger.error("FATAL: JOB_ID environment variable not provided.")
@@ -173,6 +176,153 @@ def generate_visual_query_with_nvidia(sentence: str, nvidia_key: str = "") -> st
     words = [w for w in clean.split() if w not in stop_words and len(w) > 2]
     top_words = words[:3] if len(words) >= 3 else words
     return " ".join(top_words) if top_words else "nature landscape"
+
+def generate_diffusion_prompt_with_nvidia(sentence: str, style: str, nvidia_key: str = "") -> str:
+    """Uses NVIDIA reasoning models to semantically convert a script sentence into a vivid, descriptive diffusion prompt adhering to the specified style."""
+    key = nvidia_key or NVIDIA_API_KEY
+    if key:
+        try:
+            url = "https://integrate.api.nvidia.com/v1/chat/completions"
+            prompt = (
+                f"You are an expert prompt engineer for generative AI image models (Z-Image). "
+                f"Convert the given video script sentence into a vivid, descriptive text-to-image prompt "
+                f"strictly adhering to the '{style}' artistic visual style. "
+                f"Describe the subjects, camera perspective, lighting, color palette, and visual textures suited for '{style}'.\n"
+                f"Sentence: \"{sentence}\"\n"
+                f"Visual Style: {style}\n"
+                f"Output ONLY the prompt in one single paragraph without quotes, labels, or conversational intro:"
+            )
+            payload = {
+                "model": "nvidia/nemotron-3.5-bolt-e4b",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 85
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=9) as res:
+                result = json.loads(res.read().decode())
+                d_prompt = result["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                if d_prompt:
+                    logger.info(f"[NVIDIA AI PROMPT] Scene: '{sentence[:30]}...' -> '{d_prompt[:70]}...'")
+                    return d_prompt
+        except Exception as e:
+            logger.warning(f"NVIDIA prompt generator notice: {e}. Utilizing default style composition.")
+
+    clean_sent = re.sub(r'["\']', '', sentence)
+    return f"{style} depiction of {clean_sent}, 8k resolution, cinematic lighting, highly detailed, masterpieces composition"
+
+# =============================================================================
+# 2.5 Kie.ai Z-Image Generator (Asynchronous Task Engine)
+# =============================================================================
+def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Optional[str]:
+    """Calls Kie.ai Z-Image model API, polls for completion, and downloads image to scene_{scene_idx:03d}.jpg."""
+    if not kie_key:
+        logger.warning("Kie.ai API key is missing. Skipping AI generation and falling back to stock photo retrieval.")
+        return None
+
+    out_path = f"scene_{scene_idx:03d}.jpg"
+    create_url = "https://api.kie.ai/api/v1/jobs/createTask"
+    payload = {
+        "model": "z-image",
+        "input": {
+            "prompt": prompt,
+            "aspect_ratio": "16:9"
+        }
+    }
+
+    task_id = None
+    try:
+        logger.info(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1}: Submitting task with prompt: '{prompt[:60]}...'")
+        req = urllib.request.Request(
+            create_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {kie_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "EpicAutomateRunner/2.0"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=12) as res:
+            resp_data = json.loads(res.read().decode())
+            code = resp_data.get("code")
+            if code == 200:
+                task_id = resp_data.get("data", {}).get("taskId")
+                logger.info(f"[KIE.AI Z-IMAGE] Task {task_id} successfully created on Kie.ai")
+            else:
+                logger.warning(f"Kie.ai createTask error code {code}: {resp_data.get('msg')}")
+                return None
+    except Exception as e:
+        logger.warning(f"Kie.ai createTask network exception: {e}. Falling back to stock photos.")
+        return None
+
+    if not task_id:
+        return None
+
+    # Polling loop: query recordInfo every 3 seconds for up to 75 seconds
+    poll_url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={task_id}"
+    start_time = time.time()
+    max_wait = 75
+
+    while time.time() - start_time < max_wait:
+        check_cancel()
+        time.sleep(3)
+        try:
+            req = urllib.request.Request(
+                poll_url,
+                headers={
+                    "Authorization": f"Bearer {kie_key}",
+                    "User-Agent": "EpicAutomateRunner/2.0"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as res:
+                poll_resp = json.loads(res.read().decode())
+                data_obj = poll_resp.get("data", {})
+                state = (data_obj.get("state") or "").lower()
+
+                logger.info(f"[KIE.AI Z-IMAGE] Polling {task_id}: status={state} ({int(time.time() - start_time)}s)")
+
+                if state in ["success", "completed"]:
+                    # Extract image URL from resultJson or data_obj
+                    result_json = data_obj.get("resultJson", "")
+                    image_url = None
+                    if result_json:
+                        try:
+                            parsed = json.loads(result_json) if isinstance(result_json, str) else result_json
+                            urls = parsed.get("resultUrls") or parsed.get("images")
+                            if urls and len(urls) > 0:
+                                image_url = urls[0]
+                        except Exception:
+                            pass
+                    
+                    if not image_url:
+                        urls = data_obj.get("resultUrls") or data_obj.get("response", {}).get("resultUrls")
+                        if urls and len(urls) > 0:
+                            image_url = urls[0]
+
+                    if image_url:
+                        logger.info(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} successfully generated: {image_url}")
+                        if download_and_crop_image(image_url, out_path):
+                            return out_path
+                    break
+
+                elif state in ["fail", "error", "generate_failed"]:
+                    fail_msg = data_obj.get("failMsg") or data_obj.get("failCode") or "Generation failed on server"
+                    logger.warning(f"[KIE.AI Z-IMAGE] Generation failed: {fail_msg}")
+                    break
+
+        except Exception as e:
+            logger.debug(f"Kie.ai polling check: {e}")
+
+    logger.warning(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} generation incomplete or timed out. Gracefully falling back to stock photo retriever.")
+    return None
 
 # =============================================================================
 # 3. Multi-Source Real Photography Retrieval (100% Guaranteed Real Images)
@@ -577,13 +727,20 @@ def main():
             sources_val = fields.get("sources", {}).get("arrayValue", {}).get("values", [])
             sources = [s.get("stringValue", "") for s in sources_val] or ["wikimedia", "duckduckgo"]
             
+            use_ai_gen = fields.get("use_ai_generator", {}).get("booleanValue", False) or USE_AI_GENERATOR
+            img_style = fields.get("image_style", {}).get("stringValue", "") or IMAGE_STYLE or "hyper realistic"
+            kie_key = fields.get("kie_api_key", {}).get("stringValue", "") or KIE_API_KEY
+
             job_data = {
                 "sentences": sentences,
                 "voice": voice,
                 "speed": speed,
                 "nvidia_key": nvidia_key,
                 "captions": captions_cfg,
-                "sources": sources
+                "sources": sources,
+                "use_ai_generator": use_ai_gen,
+                "image_style": img_style,
+                "kie_key": kie_key
             }
     except Exception as e:
         logger.warning(f"Could not load Firestore params ({e}). Using sample fallback.")
@@ -597,12 +754,15 @@ def main():
             "speed": 1.0,
             "nvidia_key": NVIDIA_API_KEY,
             "captions": {"enabled": True, "position": "bottom", "size": "medium", "style": "bold_yellow"},
-            "sources": ["wikimedia", "duckduckgo"]
+            "sources": ["wikimedia", "duckduckgo"],
+            "use_ai_generator": USE_AI_GENERATOR,
+            "image_style": IMAGE_STYLE,
+            "kie_key": KIE_API_KEY
         }
 
     sentences = job_data["sentences"]
     total_scenes = len(sentences)
-    logger.info(f"Processing {total_scenes} video scenes...")
+    logger.info(f"Processing {total_scenes} video scenes (Mode: {'Kie.ai Z-Image' if job_data['use_ai_generator'] else 'Stock Photos'})...")
 
     scene_videos = []
     
@@ -611,12 +771,17 @@ def main():
         check_cancel()
         pct = 15 + int((i / total_scenes) * 65)
         
-        # Step A: Reasoning query
-        update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...")
-        visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
-        
-        # Step B: Unique stock photo (guaranteed real photography)
-        img_path = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+        # Step A & B: Image Generation (Kie.ai Z-Image) or Stock Photo Retrieval
+        img_path = None
+        if job_data.get("use_ai_generator") and job_data.get("kie_key"):
+            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Generating {job_data['image_style'][:25]} AI image with Kie.ai Z-Image...")
+            ai_prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
+            img_path = generate_image_with_kie(ai_prompt, job_data["kie_key"], i)
+
+        if not img_path:
+            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...")
+            visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
+            img_path = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
         
         # Step C: Kokoro TTS audio
         update_firestore(pct + 2, f"Scene {i+1}/{total_scenes}: Generating Kokoro-82M speech ({job_data['voice']})...")
