@@ -3,6 +3,17 @@
 =============================================================================
 Epic Automate - Cloud Video Pipeline Worker
 =============================================================================
+Features:
+1. Kokoro-82M Text-to-Speech (High fidelity open weights <500MB)
+2. NVIDIA Reasoning Model (nvidia/nemotron-3.5-bolt-e4b) for Visual Photography Keywords
+3. Kie.ai Z-Image Diffusion Model (with dynamic style prompts: hyper-realistic, claymation, 3D Pixar, 2D painting, etc.)
+4. Multi-source Real Photography Retriever (Wikimedia File API, Wikipedia REST,
+   DuckDuckGo Image API, Picsum Photography Stream, Curated HD Photography)
+5. FFmpeg Scene Assembler with Ken Burns Pan/Zoom & Dynamic Burn-in Subtitles
+6. Master 1080p Video Concatenation
+7. Real-time Firestore Telemetry Reporting & Cancellation Watchdog
+8. Hugging Face Datasets Master Video Storage & Direct Asset Preview
+=============================================================================
 """
 
 import os
@@ -23,12 +34,16 @@ from typing import List, Dict, Optional, Tuple
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("epic_video_worker")
 
+# Configuration & Environment
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "epic-studio-94147")
 JOB_ID = os.environ.get("JOB_ID", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_DATASET_REPO = os.environ.get("HF_DATASET_REPO", "felizzy/epic-automation-assets")
 DEFAULT_NVIDIA_KEY = "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"
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "") or DEFAULT_NVIDIA_KEY
+USE_AI_GENERATOR = os.environ.get("USE_AI_GENERATOR", "false").lower() == "true"
+IMAGE_STYLE = os.environ.get("IMAGE_STYLE", "hyper realistic")
+KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
 
 if not JOB_ID:
     logger.error("FATAL: JOB_ID environment variable not provided.")
@@ -138,6 +153,124 @@ def generate_visual_query_with_nvidia(sentence: str, nvidia_key: str = "") -> st
     top_words = words[:3] if len(words) >= 3 else words
     return " ".join(top_words) if top_words else "nature landscape"
 
+def generate_diffusion_prompt_with_nvidia(sentence: str, style: str, nvidia_key: str = "") -> str:
+    key = nvidia_key or NVIDIA_API_KEY
+    if key:
+        try:
+            url = "https://integrate.api.nvidia.com/v1/chat/completions"
+            prompt = (
+                f"You are an expert prompt engineer for generative AI image models (Z-Image). "
+                f"Convert the given video script sentence into a vivid, descriptive text-to-image prompt "
+                f"strictly adhering to the '{style}' artistic visual style. "
+                f"Describe the subjects, camera perspective, lighting, color palette, and visual textures suited for '{style}'.\n"
+                f"Sentence: \"{sentence}\"\n"
+                f"Visual Style: {style}\n"
+                f"Output ONLY the prompt in one single paragraph without quotes, labels, or conversational intro:"
+            )
+            payload = {
+                "model": "nvidia/nemotron-3.5-bolt-e4b",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 85
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=9) as res:
+                result = json.loads(res.read().decode())
+                d_prompt = result["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                if d_prompt:
+                    logger.info(f"[NVIDIA AI PROMPT] Scene: '{sentence[:30]}...' -> '{d_prompt[:70]}...'")
+                    return d_prompt
+        except Exception as e:
+            logger.warning(f"NVIDIA prompt generator notice: {e}. Utilizing default style composition.")
+
+    clean_sent = re.sub(r'["\']', '', sentence)
+    return f"{style} depiction of {clean_sent}, 8k resolution, cinematic lighting, highly detailed, masterpieces composition"
+
+def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Optional[str]:
+    if not kie_key:
+        logger.warning("Kie.ai API key is missing. Skipping AI generation and falling back to stock photo retrieval.")
+        return None
+
+    out_path = f"scene_{scene_idx:03d}.jpg"
+    create_url = "https://api.kie.ai/api/v1/jobs/createTask"
+    payload = {
+        "model": "z-image",
+        "input": {"prompt": prompt, "aspect_ratio": "16:9"}
+    }
+
+    task_id = None
+    try:
+        logger.info(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1}: Submitting task with prompt: '{prompt[:60]}...'")
+        req = urllib.request.Request(
+            create_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {kie_key}", "Content-Type": "application/json", "User-Agent": "EpicAutomateRunner/2.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=12) as res:
+            resp_data = json.loads(res.read().decode())
+            if resp_data.get("code") == 200:
+                task_id = resp_data.get("data", {}).get("taskId")
+                logger.info(f"[KIE.AI Z-IMAGE] Task {task_id} successfully created on Kie.ai")
+            else:
+                logger.warning(f"Kie.ai createTask error code {resp_data.get('code')}: {resp_data.get('msg')}")
+                return None
+    except Exception as e:
+        logger.warning(f"Kie.ai createTask network exception: {e}. Falling back to stock photos.")
+        return None
+
+    if not task_id: return None
+
+    poll_url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={task_id}"
+    start_time = time.time()
+    max_wait = 75
+
+    while time.time() - start_time < max_wait:
+        check_cancel()
+        time.sleep(3)
+        try:
+            req = urllib.request.Request(poll_url, headers={"Authorization": f"Bearer {kie_key}", "User-Agent": "EpicAutomateRunner/2.0"})
+            with urllib.request.urlopen(req, timeout=10) as res:
+                poll_resp = json.loads(res.read().decode())
+                data_obj = poll_resp.get("data", {})
+                state = (data_obj.get("state") or "").lower()
+
+                logger.info(f"[KIE.AI Z-IMAGE] Polling {task_id}: status={state} ({int(time.time() - start_time)}s)")
+
+                if state in ["success", "completed"]:
+                    result_json = data_obj.get("resultJson", "")
+                    image_url = None
+                    if result_json:
+                        try:
+                            parsed = json.loads(result_json) if isinstance(result_json, str) else result_json
+                            urls = parsed.get("resultUrls") or parsed.get("images")
+                            if urls and len(urls) > 0: image_url = urls[0]
+                        except Exception: pass
+                    
+                    if not image_url:
+                        urls = data_obj.get("resultUrls") or data_obj.get("response", {}).get("resultUrls")
+                        if urls and len(urls) > 0: image_url = urls[0]
+
+                    if image_url:
+                        logger.info(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} successfully generated: {image_url}")
+                        if download_and_crop_image(image_url, out_path):
+                            return out_path
+                    break
+
+                elif state in ["fail", "error", "generate_failed"]:
+                    fail_msg = data_obj.get("failMsg") or data_obj.get("failCode") or "Generation failed on server"
+                    logger.warning(f"[KIE.AI Z-IMAGE] Generation failed: {fail_msg}")
+                    break
+        except Exception as e:
+            logger.debug(f"Kie.ai polling check: {e}")
+
+    logger.warning(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} generation incomplete or timed out. Gracefully falling back to stock photo retriever.")
+    return None
+
 USED_IMAGE_URLS = set()
 CURATED_STOCK_PHOTOS = [
     "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1920&q=80",
@@ -147,9 +280,7 @@ CURATED_STOCK_PHOTOS = [
     "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=1920&q=80",
     "https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?auto=format&fit=crop&w=1920&q=80",
     "https://images.unsplash.com/photo-1507499739999-097706ad8914?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80",
-    "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1920&q=80"
+    "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=1920&q=80"
 ]
 
 def download_and_crop_image(url: str, dest_path: str) -> bool:
@@ -432,9 +563,15 @@ def main():
             }
             sources_val = fields.get("sources", {}).get("arrayValue", {}).get("values", [])
             sources = [s.get("stringValue", "") for s in sources_val] or ["wikimedia", "duckduckgo"]
+            
+            use_ai_gen = fields.get("use_ai_generator", {}).get("booleanValue", False) or USE_AI_GENERATOR
+            img_style = fields.get("image_style", {}).get("stringValue", "") or IMAGE_STYLE or "hyper realistic"
+            kie_key = fields.get("kie_api_key", {}).get("stringValue", "") or KIE_API_KEY
+
             job_data = {
                 "sentences": sentences, "voice": voice, "speed": speed,
-                "nvidia_key": nvidia_key, "captions": captions_cfg, "sources": sources
+                "nvidia_key": nvidia_key, "captions": captions_cfg, "sources": sources,
+                "use_ai_generator": use_ai_gen, "image_style": img_style, "kie_key": kie_key
             }
     except Exception as e:
         logger.warning(f"Could not load Firestore params ({e}). Using sample fallback.")
@@ -446,22 +583,33 @@ def main():
             ],
             "voice": "af_heart", "speed": 1.0, "nvidia_key": NVIDIA_API_KEY,
             "captions": {"enabled": True, "position": "bottom", "size": "medium", "style": "bold_yellow"},
-            "sources": ["wikimedia", "duckduckgo"]
+            "sources": ["wikimedia", "duckduckgo"],
+            "use_ai_generator": USE_AI_GENERATOR, "image_style": IMAGE_STYLE, "kie_key": KIE_API_KEY
         }
 
     sentences = job_data["sentences"]
     total_scenes = len(sentences)
-    logger.info(f"Processing {total_scenes} video scenes...")
+    logger.info(f"Processing {total_scenes} video scenes (Mode: {'Kie.ai Z-Image' if job_data['use_ai_generator'] else 'Stock Photos'})...")
 
     scene_videos = []
     for i, sentence in enumerate(sentences):
         check_cancel()
         pct = 15 + int((i / total_scenes) * 65)
-        update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...")
-        visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
-        img_path = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+        
+        img_path = None
+        if job_data.get("use_ai_generator") and job_data.get("kie_key"):
+            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Generating {job_data['image_style'][:25]} AI image with Kie.ai Z-Image...")
+            ai_prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
+            img_path = generate_image_with_kie(ai_prompt, job_data["kie_key"], i)
+
+        if not img_path:
+            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...")
+            visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
+            img_path = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+
         update_firestore(pct + 2, f"Scene {i+1}/{total_scenes}: Generating Kokoro-82M speech ({job_data['voice']})...")
         audio_path, duration = generate_kokoro_audio(sentence, job_data["voice"], job_data["speed"], i)
+        
         update_firestore(pct + 4, f"Scene {i+1}/{total_scenes}: Assembling video scene with dynamic captions...")
         scene_mp4 = assemble_scene_video(img_path, audio_path, sentence, duration, job_data["captions"], i)
         scene_videos.append(scene_mp4)
