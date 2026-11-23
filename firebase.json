@@ -4,6 +4,7 @@
                       "rules":  "firestore.rules"
                   },
     "hosting":  {
+                    "site":  "epic-studio-94147",
                     "ignore":  [
                                    "firebase.json",
                                    "**/.*",
