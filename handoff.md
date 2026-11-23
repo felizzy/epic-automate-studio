@@ -7,13 +7,15 @@
 ## 1. Project Identity & Architecture
 - **Project Name**: Epic Automate Studio (Kokoro-82M TTS + NVIDIA Vision Video Generator)
 - **Date Created**: 2026-11-22
-- **Last Modified**: 2026-11-22 07:26
+- **Last Modified**: 2026-11-23 05:45
 - **Modus Operandi**: `epic-automate`
   - Frontend: Dedicated New Firebase Project (`epic-studio-94147`, Firebase Hosting)
   - State & Progress: Cloud Firestore (`/automations/{jobId}` and `/users/{userId}`)
-  - Compute Server: Kaggle T4 GPU (`nvidiaTeslaT4`) via Kernel Push
+  - Compute Server: GitHub Actions Instant Runner (`felizzy/epic-automate-studio`, workflow: `video_worker.yml`)
   - Asset Storage: Hugging Face Datasets with Web Media Preview Player (`felizzy/epic-automation-assets`)
   - Version Control: GitHub Repository (`felizzy/epic-automate-studio`)
+  - AI Image Generator: Kie.ai Z-Image API with style adaptation + NVIDIA Nemotron diffusion prompt engineering
+  - Speech Synthesis: Kokoro-82M ONNX (<500MB weights)
 
 ---
 
@@ -26,6 +28,7 @@
 | **GitHub Actions** | Compute Worker | Workflow: `.github/workflows/video_worker.yml` (Instant Runner) | 🟢 Active |
 | **Hugging Face** | Storage Dataset | `https://huggingface.co/datasets/felizzy/epic-automation-assets` | 🟢 Verified |
 | **GitHub** | Source Code | `https://github.com/felizzy/epic-automate-studio` | 🟢 Synced |
+| **Kie.ai Z-Image** | Image Engine | `https://api.kie.ai/api/v1/jobs` (`z-image`, 16:9) | 🟢 Integrated |
 
 ---
 
@@ -34,6 +37,7 @@
 - [x] **Hugging Face Token**: Stored as `HF_TOKEN` with Write permissions (`@felizzy`).
 - [x] **Kaggle API**: Verified via `~/.kaggle/kaggle.json` (`chikwasfelix` / `KGAT_338d2595814cc5a40e7404bc76cb35d4`).
 - [x] **Firebase Authentication**: Active session in Firebase CLI for project `epic-studio-94147`.
+- [x] **Kie.ai API Key**: Stored per-user in Firestore `/users/{userId}` (`kie_api_key`). Never shared across user accounts (strict multitenant isolation enforced by Firestore security rules `isOwner(userId)`).
 
 ---
 
@@ -50,11 +54,32 @@
   - Automatic 1080p MP4 concatenation and upload to Hugging Face Datasets.
   - Real-time Firestore milestone synchronization and immediate cancellation watchdog.
   - Frontend wired with live GitHub Actions runner status monitor (`queued`, `in_progress`, `completed`).
+- **2026-11-22**: Fixed "no stock images / static gradient fallback" issue:
+  - Upgraded NVIDIA reasoning model to active, fast `nvidia/nemotron-3.5-bolt-e4b` (replacing deprecated `meta/llama-3.3-70b-instruct`).
+  - Corrected Wikimedia search to query namespace 6 (`gsrnamespace=6`), guaranteeing direct high-resolution photographic image files (`image/jpeg` / `image/png`).
+  - Added multi-tier fallback architecture: Wikimedia Commons API -> Wikipedia REST Summary original media -> DuckDuckGo image JSON API (`i.js`) -> Picsum deterministic real photo stream (`https://picsum.photos/seed/.../1920/1080`) -> Curated authentic Unsplash HD library.
+  - Implemented multi-word contextual phrase search and an anti-diagram blacklist to eliminate technical schematics and guarantee genuine photography.
+  - Completely eradicated synthetic procedural Pillow RGB gradients, guaranteeing 100% genuine real photography across every video scene.
+- **2026-11-23**: Added **Kie.ai Z-Image AI Generator & Art Style Customization**:
+  - **Multitenant Key Isolation**: Added `kie_api_key` input to Settings Tab. Saved strictly to Firestore document `/users/{userId}`. Cloud Firestore rules enforce `isOwner(userId)` (`request.auth.uid == userId`) so no other user can read or overwrite another user's key. Auth state listener wipes credential inputs immediately on logout.
+  - **Visual Scene Engine UI**: Added toggle in Studio Tab (`#toggleAiGenerator`) to switch between "AI Z-Image (Kie.ai)" and "Stock Photography". Added art style selector dropdown (`#imageStyleSelect`) with options:
+    - *Hyper Realistic* (Default): 8k resolution, cinematic lighting, photorealistic textures.
+    - *Claymation*: Stop-motion clay figures, plasticine textures, studio miniature lighting.
+    - *2D Digital Painting*: Concept art, vivid brush strokes, fantasy digital illustration.
+    - *3D Pixar Animation*: Stylized 3D render, subsurface scattering, Disney Pixar aesthetic.
+    - *Japanese Anime*: Studio Ghibli inspired anime aesthetic, Makoto Shinkai sky.
+    - *Vintage Oil Painting*: Classical Renaissance canvas, rich impasto oil paint texture.
+    - *Cyberpunk Neon*: Blade Runner aesthetic, dark moody cyberpunk metropolis, neon reflections.
+    - *Custom*: Allows user to type any bespoke art direction prompt.
+  - **Diffusion Prompt Generation**: `generate_diffusion_prompt_with_nvidia` in `pipeline_executor.py` prompts `nvidia/nemotron-3.5-bolt-e4b` to turn each sentence into a rich, visual text-to-image prompt tailored for the selected art style.
+  - **Kie.ai Z-Image Generation**: `generate_image_with_kie` calls `POST https://api.kie.ai/api/v1/jobs/createTask` (`model: "z-image"`, `aspect_ratio: "16:9"`), polls task progress until completion, extracts the generated image, center-crops to 1920x1080, and falls back gracefully to stock photos if the key is omitted or fails.
+  - **Firestore Rules Update**: Updated via `firestore-rules-author` subagent to allow `kie_api_key` in `/users/{userId}` and `use_ai_generator`, `image_style`, `kie_api_key` in `/automations/{jobId}`.
+  - **Deployment**: Synchronized to GitHub repository `felizzy/epic-automate-studio` and deployed to Firebase Hosting `https://epic-studio-94147.web.app`.
 
 ---
 
 ## 5. Standard Operating Procedures for Subsequent Agents
 1. **Never reuse an old Firebase project** unless explicitly requested by the user.
-2. **Always re-verify Kaggle's latest T4 accelerator syntax** before pushing kernels.
-3. **Verify the cancellation watchdog** functions properly when testing workers.
+2. **Never expose or leak user API keys**: Keep all keys scoped to individual Firestore documents (`/users/{uid}`) with strict `request.auth.uid == userId` rules.
+3. **Always use the firestore-rules-author subagent** when modifying `firestore.rules`.
 4. **Always update this `handoff.md`** file upon completing any task or modification.
