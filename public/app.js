@@ -961,16 +961,18 @@ btnResumeActiveJob.addEventListener("click", () => {
   }
 });
 
-// Filter pill events
-jobFilterPills.forEach(pill => {
-  pill.addEventListener("click", (e) => {
-    jobFilterPills.forEach(p => p.classList.remove("active"));
-    const target = e.currentTarget;
-    target.classList.add("active");
-    currentJobFilter = target.dataset.filter || "all";
+// Filter pill events via event delegation
+const jobFilterPillsContainer = document.getElementById("jobFilterPills");
+if (jobFilterPillsContainer) {
+  jobFilterPillsContainer.addEventListener("click", (e) => {
+    const pill = e.target.closest(".filter-pill");
+    if (!pill) return;
+    jobFilterPillsContainer.querySelectorAll(".filter-pill").forEach(p => p.classList.remove("active"));
+    pill.classList.add("active");
+    currentJobFilter = pill.dataset.filter || "all";
     renderJobsList();
   });
-});
+}
 
 // Refresh button event
 if (btnRefreshJobs) {
