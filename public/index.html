@@ -196,21 +196,62 @@
 
         </div>
 
-        <!-- AI Visual Reasoning & Stock Sources -->
+        <!-- AI Visual Generation & Stock Sources -->
         <div class="ios-card glass-panel">
           <div class="card-title-row">
             <div class="title-with-icon">
-              <span class="card-icon">🧠</span>
+              <span class="card-icon">🎨</span>
               <div>
-                <h3 class="card-heading">Visual Reasoning & Image Sources</h3>
-                <p class="card-subheading">NVIDIA's latest reasoning model translates semantic meaning into visual search queries</p>
+                <h3 class="card-heading">Visual Scene Engine</h3>
+                <p class="card-subheading">Generate custom AI images via Kie.ai Z-Image or search curated stock photography</p>
               </div>
             </div>
-            <span class="badge-mini badge-purple">NVIDIA NIM</span>
+            <span class="badge-mini badge-purple" id="visualModeBadge">Stock Photos</span>
           </div>
 
-          <div class="stock-sources-container">
-            <span class="sources-label">Active Image Providers (Guaranteed Unique Images):</span>
+          <!-- Toggle: Use AI Image Generator -->
+          <div class="toggle-control-row">
+            <div class="toggle-info">
+              <span class="toggle-title">Use AI Image Generator (Kie.ai Z-Image)</span>
+              <span class="toggle-desc">Directs AI to craft bespoke image prompts instead of searching stock libraries</span>
+            </div>
+            <label class="ios-switch">
+              <input type="checkbox" id="toggleAiGenerator">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- AI Generator Options (Visible when toggleAiGenerator is ON) -->
+          <div id="aiGeneratorOptions" class="generator-options-box" style="display: none;">
+            <div class="ios-grid-two">
+              <div class="form-field">
+                <label for="imageStyleSelect">Visual Art Style Preset</label>
+                <select id="imageStyleSelect" class="ios-select">
+                  <option value="hyper_realistic" selected>📸 Hyper Realistic (Default)</option>
+                  <option value="claymation">🧱 Claymation & Stop Motion</option>
+                  <option value="2d_painting">🎨 2D Digital Painting & Concept Art</option>
+                  <option value="3d_pixar">✨ 3D Pixar / Disney Animation</option>
+                  <option value="anime">🌸 Anime & Studio Ghibli</option>
+                  <option value="oil_painting">🖼 Vintage Oil Painting</option>
+                  <option value="cyberpunk">🌃 Cyberpunk & Neon Sci-Fi</option>
+                  <option value="custom">✏️ Custom Style Prompt...</option>
+                </select>
+              </div>
+
+              <div class="form-field" id="customStyleGroup">
+                <label for="customStyleInput">Image Style Modifier</label>
+                <input type="text" id="customStyleInput" class="ios-input" placeholder="e.g. 1980s retro anime, claymation, water color..." value="Hyper realistic photograph, 8k resolution, cinematic lighting, ultra-detailed">
+                <span class="field-hint">Defines the artistic style prompt applied to every generated scene</span>
+              </div>
+            </div>
+            <div class="ai-prompt-preview-tip">
+              💡 <span>NVIDIA reasoning will automatically generate bespoke diffusion prompts for every sentence in this style, rendered by Kie.ai Z-Image. Ensure your Kie.ai API key is saved in Settings.</span>
+            </div>
+          </div>
+
+          <!-- Stock Image Providers (Visible when toggleAiGenerator is OFF) -->
+          <div id="stockSourcesSection" class="stock-sources-container">
+            <span class="sources-label">Active Stock Image Providers:</span>
             <div class="source-chips">
               <label class="source-chip"><input type="checkbox" checked value="pexels" id="srcPexels"> <span>Pexels HD</span></label>
               <label class="source-chip"><input type="checkbox" checked value="unsplash" id="srcUnsplash"> <span>Unsplash</span></label>
@@ -295,6 +336,51 @@
             <span class="pulse-ring"></span>
             <span id="milestoneText">System idle. Ready to process script.</span>
           </div>
+
+          <!-- Active Job Resume Alert Banner (Shown when a job fails or has saved scenes) -->
+          <div id="activeJobResumeBanner" class="active-resume-box" style="display: none;">
+            <div class="resume-box-content">
+              <span class="resume-icon">⚡</span>
+              <div class="resume-text-group">
+                <strong id="resumeBannerTitle">Job Halted with Cached Scenes</strong>
+                <span id="resumeBannerDesc">3 scenes generated. Resuming will reuse existing images and save Kie.ai credits.</span>
+              </div>
+            </div>
+            <button type="button" id="btnResumeActiveJob" class="ios-btn ios-btn-primary btn-sm">
+              <span class="btn-icon">⚡</span>
+              <span>Resume Job Now</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- All Job Executions & History Card -->
+        <div class="ios-card glass-panel job-history-card">
+          <div class="card-title-row">
+            <div class="title-with-icon">
+              <span class="card-icon">📋</span>
+              <div>
+                <h3 class="card-heading">All Executed Jobs</h3>
+                <p class="card-subheading">Track, monitor, and resume all runs without wasting credits</p>
+              </div>
+            </div>
+            <div class="history-controls">
+              <div class="filter-pills" id="jobFilterPills">
+                <button type="button" class="filter-pill active" data-filter="all">All (<span id="countAll">0</span>)</button>
+                <button type="button" class="filter-pill" data-filter="running">Running (<span id="countRunning">0</span>)</button>
+                <button type="button" class="filter-pill" data-filter="completed">Completed (<span id="countCompleted">0</span>)</button>
+                <button type="button" class="filter-pill" data-filter="failed">Failed (<span id="countFailed">0</span>)</button>
+              </div>
+              <button type="button" class="btn-micro" id="btnRefreshJobs">🔄 Refresh</button>
+            </div>
+          </div>
+
+          <!-- Job History List Container -->
+          <div class="jobs-list" id="jobsListContainer">
+            <div class="jobs-empty-state" id="jobsEmptyState">
+              <span class="empty-icon">📂</span>
+              <p>No executed jobs found yet. Launch a video pipeline in the Studio tab!</p>
+            </div>
+          </div>
         </div>
 
         <!-- Terminal Console Card -->
@@ -371,6 +457,12 @@
                 <label for="cfgNvidiaKey">NVIDIA NIM API Key</label>
                 <input type="password" id="cfgNvidiaKey" class="ios-input" placeholder="nvapi-..." value="">
                 <span class="field-hint">Leave blank to use intelligent semantic reasoning fallback.</span>
+              </div>
+
+              <div class="form-field">
+                <label for="cfgKieKey">Kie.ai API Key (Z-Image Generator)</label>
+                <input type="password" id="cfgKieKey" class="ios-input" placeholder="Bearer key from kie.ai" value="">
+                <span class="field-hint">Required for AI Image Generator mode. Strictly isolated to your user account.</span>
               </div>
 
               <div class="form-field">
