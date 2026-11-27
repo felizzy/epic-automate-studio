@@ -18,6 +18,7 @@ import {
   setDoc, 
   getDoc, 
   updateDoc, 
+  deleteDoc,
   onSnapshot, 
   collection,
   query,
@@ -103,6 +104,9 @@ const activeJobResumeBanner = document.getElementById("activeJobResumeBanner");
 const resumeBannerTitle = document.getElementById("resumeBannerTitle");
 const resumeBannerDesc = document.getElementById("resumeBannerDesc");
 const btnResumeActiveJob = document.getElementById("btnResumeActiveJob");
+const activeJobControlsBar = document.getElementById("activeJobControlsBar");
+const btnCancelActiveJob = document.getElementById("btnCancelActiveJob");
+const btnDeleteActiveJob = document.getElementById("btnDeleteActiveJob");
 const jobFilterPills = document.querySelectorAll(".filter-pill");
 const jobsListContainer = document.getElementById("jobsListContainer");
 const jobsEmptyState = document.getElementById("jobsEmptyState");
@@ -111,6 +115,47 @@ const countRunning = document.getElementById("countRunning");
 const countCompleted = document.getElementById("countCompleted");
 const countFailed = document.getElementById("countFailed");
 const btnRefreshJobs = document.getElementById("btnRefreshJobs");
+
+// DOM Elements: Kie.ai Live Credit Balance
+const kieCreditPill = document.getElementById("kieCreditPill");
+const kieCreditValue = document.getElementById("kieCreditValue");
+const btnRefreshCredit = document.getElementById("btnRefreshCredit");
+const studioKieCreditBadge = document.getElementById("studioKieCreditBadge");
+const studioKieCreditVal = document.getElementById("studioKieCreditVal");
+const settingsKieCreditVal = document.getElementById("settingsKieCreditVal");
+
+// Kie.ai Credit Balance Fetcher
+async function fetchKieCredit(apiKey) {
+  if (!apiKey) {
+    updateKieCreditUI("--", 0);
+    return;
+  }
+  try {
+    const res = await fetch("https://api.kie.ai/api/v1/chat/credit", {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
+      }
+    });
+    if (res.ok) {
+      const result = await res.json();
+      if (result && result.data !== undefined) {
+        const credits = Number(result.data);
+        const formatted = isNaN(credits) ? String(result.data) : credits.toFixed(2);
+        updateKieCreditUI(formatted, credits);
+      }
+    } else {
+      console.warn("Kie.ai balance check returned HTTP", res.status);
+    }
+  } catch (err) {
+    console.warn("Kie.ai credit balance fetch notice:", err);
+  }
+}
+
+function updateKieCreditUI(label, val) {
+  if (kieCreditValue) kieCreditValue.textContent = `${label} Credits`;
+  if (studioKieCreditVal) studioKieCreditVal.textContent = `${label} Credits`;
+  if (settingsKieCreditVal) settingsKieCreditVal.textContent = `${label} Credits`;
+}
 
 // Global Jobs State
 let allJobs = [];
@@ -396,8 +441,13 @@ async function loadUserSettings(userId) {
 
       if (data.nvidia_api_key) cfgNvidiaKey.value = data.nvidia_api_key;
 
-      if (data.kie_api_key && cfgKieKey) cfgKieKey.value = data.kie_api_key;
-      else if (cfgKieKey) cfgKieKey.value = "";
+      if (data.kie_api_key && cfgKieKey) {
+        cfgKieKey.value = data.kie_api_key;
+        fetchKieCredit(data.kie_api_key);
+      } else if (cfgKieKey) {
+        cfgKieKey.value = "";
+        updateKieCreditUI("--", 0);
+      }
 
       if (data.hf_token) cfgHfToken.value = data.hf_token;
 
@@ -432,6 +482,10 @@ async function saveUserSettings(userId, showToast = true) {
     const userDocRef = doc(db, "users", userId);
     await setDoc(userDocRef, settingsData, { merge: true });
 
+    if (cfgKieKey && cfgKieKey.value.trim()) {
+      fetchKieCredit(cfgKieKey.value.trim());
+    }
+
     if (showToast) {
       saveStatusToast.style.display = "inline";
       setTimeout(() => {
@@ -450,6 +504,25 @@ settingsForm.addEventListener("submit", async (e) => {
   if (!currentUser) return;
   await saveUserSettings(currentUser.uid, true);
 });
+
+// Refresh Kie.ai Credit Balance Listeners
+if (cfgKieKey) {
+  cfgKieKey.addEventListener("change", () => {
+    fetchKieCredit(cfgKieKey.value.trim());
+  });
+}
+
+if (btnRefreshCredit) {
+  btnRefreshCredit.addEventListener("click", () => {
+    const key = cfgKieKey ? cfgKieKey.value.trim() : "";
+    if (key) {
+      appendLog("Checking live Kie.ai credit balance...", "sys");
+      fetchKieCredit(key);
+    } else {
+      appendLog("Enter Kie.ai API Key in Settings to view credit balance.", "warn");
+    }
+  });
+}
 
 // ==========================================================================
 // 5. Job Execution & Kaggle T4 Triggering
@@ -500,6 +573,7 @@ btnLaunch.addEventListener("click", async () => {
 
   const jobId = `job_${Date.now()}`;
   currentJobId = jobId;
+  localStorage.setItem("epic_active_job_id", jobId);
 
   // Prepare job payload
   const jobData = {
@@ -570,48 +644,10 @@ btnLaunch.addEventListener("click", async () => {
   }
 });
 
-// Cancel execution
-btnCancel.addEventListener("click", async () => {
-  if (!currentJobId) return;
-  
-  const confirmCancel = confirm("Are you sure you want to abort this automation on GitHub Actions?");
-  if (!confirmCancel) return;
-
-  if (githubWatcherInterval) {
-    clearInterval(githubWatcherInterval);
-    githubWatcherInterval = null;
-  }
-
-  try {
-    btnCancel.disabled = true;
-    appendLog("⏹ Requesting immediate cancellation on GitHub Actions...", "warn");
-    
-    const jobDocRef = doc(db, "automations", currentJobId);
-    await updateDoc(jobDocRef, {
-      cancel_requested: true,
-      status: "cancelled",
-      current_milestone: "Cancellation requested by user. Terminating runner...",
-      updated_at: new Date().toISOString()
-    });
-
-    // Also attempt API cancellation of active GitHub Actions run if known
-    if (activeRunId && cfgGithubPat && cfgGithubRepo) {
-      try {
-        await fetch(`https://api.github.com/repos/${cfgGithubRepo.value.trim()}/actions/runs/${activeRunId}/cancel`, {
-          method: "POST",
-          headers: {
-            "Authorization": "token " + cfgGithubPat.value.trim(),
-            "Accept": "application/vnd.github.v3+json"
-          }
-        });
-        appendLog(`[GITHUB RUNNER] Cancel signal sent to Run #${activeRunId}`, "sys");
-      } catch (cErr) {
-        console.warn("GitHub Actions cancel call notice:", cErr);
-      }
-    }
-  } catch (err) {
-    console.error("Cancel failed:", err);
-    appendLog(`Cancel failed: ${err.message}`, "error");
+// Cancel execution button in Studio tab
+btnCancel.addEventListener("click", () => {
+  if (currentJobId) {
+    cancelJob(currentJobId);
   }
 });
 
@@ -624,6 +660,7 @@ function listenToJob(jobId) {
   }
 
   currentJobId = jobId;
+  localStorage.setItem("epic_active_job_id", jobId);
   jobIdLabel.textContent = `Active Job ID: ${jobId}`;
 
   const jobDocRef = doc(db, "automations", jobId);
@@ -691,11 +728,28 @@ function listenToJob(jobId) {
   });
 }
 
-// Update the Active Job Resume Alert Banner
+// Update the Active Job Resume Alert Banner and Controls
 function updateActiveJobResumeBanner(jobData) {
+  const data = jobData || (currentJobId ? allJobs.find(j => (j.jobId || j.job_id || j.id) === currentJobId) : null);
+
+  // Manage Active Job Controls Bar (Cancel & Delete)
+  if (activeJobControlsBar) {
+    if (currentJobId && data) {
+      activeJobControlsBar.style.display = "flex";
+      const s = (data.status || "").toLowerCase();
+      if (btnCancelActiveJob) {
+        btnCancelActiveJob.style.display = (s === "running" || s === "queued") ? "inline-flex" : "none";
+      }
+      if (btnDeleteActiveJob) {
+        btnDeleteActiveJob.style.display = "inline-flex";
+      }
+    } else {
+      activeJobControlsBar.style.display = "none";
+    }
+  }
+
   if (!activeJobResumeBanner) return;
 
-  const data = jobData || (currentJobId ? allJobs.find(j => (j.jobId || j.job_id || j.id) === currentJobId) : null);
   if (!data) {
     activeJobResumeBanner.style.display = "none";
     return;
@@ -757,6 +811,25 @@ function listenToAllJobs(userId) {
     updateJobFilterCounts();
     renderJobsList();
     updateActiveJobResumeBanner();
+
+    // Auto-attach active job on initial load, page refresh, or device restart
+    if (!currentJobId && allJobs.length > 0) {
+      const savedJobId = localStorage.getItem("epic_active_job_id");
+      const matchedSaved = savedJobId ? allJobs.find(j => (j.jobId || j.id) === savedJobId) : null;
+      if (matchedSaved) {
+        selectJob(savedJobId);
+      } else {
+        const runningJob = allJobs.find(j => {
+          const s = (j.status || "").toLowerCase();
+          return s === "running" || s === "queued";
+        });
+        if (runningJob) {
+          selectJob(runningJob.jobId || runningJob.id);
+        } else {
+          selectJob(allJobs[0].jobId || allJobs[0].id);
+        }
+      }
+    }
   }, (err) => {
     console.warn("Real-time all jobs listener notice:", err);
   });
@@ -880,6 +953,11 @@ function renderJobsList() {
               ⚡ Resume (${cachedCount > 0 ? 'Reuse ' + cachedCount + ' Images' : 'Retry'})
             </button>
           ` : ''}
+          ${(status === 'running' || status === 'queued') ? `
+            <button type="button" class="btn-job-action btn-job-cancel" data-job-id="${escapeHtml(jId)}">
+              ⏹ Cancel
+            </button>
+          ` : ''}
           ${job.asset_url && status === 'completed' ? `
             <button type="button" class="btn-job-action btn-job-watch" data-asset-url="${escapeHtml(job.asset_url)}">
               🎬 Watch Video
@@ -890,6 +968,9 @@ function renderJobsList() {
               📋 Load in Studio
             </button>
           ` : ''}
+          <button type="button" class="btn-job-action btn-job-delete" data-job-id="${escapeHtml(jId)}" title="Delete permanently">
+            🗑 Delete
+          </button>
         </div>
       </div>
     `;
@@ -901,6 +982,7 @@ function renderJobsList() {
 // Select a job to view in telemetry & logs
 function selectJob(jobId) {
   currentJobId = jobId;
+  localStorage.setItem("epic_active_job_id", jobId);
   listenToJob(jobId);
   renderJobsList();
   
@@ -913,10 +995,90 @@ function selectJob(jobId) {
     }
   }
 
+  updateActiveJobResumeBanner(selectedJob);
+
   // Scroll to telemetry card smoothly
   const telemetryCard = document.querySelector(".ios-card");
   if (telemetryCard) {
     telemetryCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+// Cancel an active or queued job
+async function cancelJob(jobId) {
+  if (!jobId) return;
+  const confirmCancel = confirm(`Are you sure you want to abort Job #${jobId.slice(-8)}?`);
+  if (!confirmCancel) return;
+
+  if (jobId === currentJobId && githubWatcherInterval) {
+    clearInterval(githubWatcherInterval);
+    githubWatcherInterval = null;
+  }
+
+  try {
+    if (btnCancel && jobId === currentJobId) btnCancel.disabled = true;
+    appendLog(`⏹ Requesting cancellation for Job #${jobId.slice(-8)}...`, "warn");
+    const jobDocRef = doc(db, "automations", jobId);
+    await updateDoc(jobDocRef, {
+      cancel_requested: true,
+      status: "cancelled",
+      current_milestone: "Cancellation requested by user. Runner terminating...",
+      updated_at: new Date().toISOString()
+    });
+
+    // Also attempt API cancellation of active GitHub Actions run if known
+    if (activeRunId && cfgGithubPat && cfgGithubRepo && cfgGithubPat.value.trim()) {
+      try {
+        await fetch(`https://api.github.com/repos/${cfgGithubRepo.value.trim()}/actions/runs/${activeRunId}/cancel`, {
+          method: "POST",
+          headers: {
+            "Authorization": "token " + cfgGithubPat.value.trim(),
+            "Accept": "application/vnd.github.v3+json"
+          }
+        });
+        appendLog(`[GITHUB RUNNER] Cancel signal sent to Run #${activeRunId}`, "sys");
+      } catch (cErr) {
+        console.warn("GitHub Actions cancel call notice:", cErr);
+      }
+    }
+    appendLog(`Job #${jobId.slice(-8)} cancelled.`, "warn");
+  } catch (err) {
+    console.error("Cancel failed:", err);
+    appendLog(`Cancel failed: ${err.message}`, "error");
+  }
+}
+
+// Permanently delete a job record from Firestore
+async function deleteJob(jobId) {
+  if (!jobId) return;
+  const confirmDel = confirm(`Are you sure you want to permanently delete Job #${jobId.slice(-8)}? This will remove all its telemetry records.`);
+  if (!confirmDel) return;
+
+  try {
+    appendLog(`🗑 Deleting Job #${jobId.slice(-8)} from Firestore...`, "sys");
+    const jobDocRef = doc(db, "automations", jobId);
+    await deleteDoc(jobDocRef);
+    appendLog(`Job #${jobId.slice(-8)} permanently deleted.`, "success");
+
+    if (currentJobId === jobId) {
+      if (unsubscribeJobSnapshot) {
+        unsubscribeJobSnapshot();
+        unsubscribeJobSnapshot = null;
+      }
+      currentJobId = null;
+      localStorage.removeItem("epic_active_job_id");
+      jobIdLabel.textContent = "Select or launch a job";
+      progressNumber.textContent = "0%";
+      progressFill.style.width = "0%";
+      milestoneText.textContent = "System idle. Ready to process script.";
+      if (activeJobResumeBanner) activeJobResumeBanner.style.display = "none";
+      if (activeJobControlsBar) activeJobControlsBar.style.display = "none";
+      btnLaunch.disabled = false;
+      btnCancel.disabled = true;
+    }
+  } catch (err) {
+    console.error("Delete failed:", err);
+    appendLog(`Delete failed: ${err.message}`, "error");
   }
 }
 
@@ -960,6 +1122,19 @@ btnResumeActiveJob.addEventListener("click", () => {
     resumeJob(activeJob);
   }
 });
+
+// Active Job Controls Bar: Cancel & Delete
+if (btnCancelActiveJob) {
+  btnCancelActiveJob.addEventListener("click", () => {
+    if (currentJobId) cancelJob(currentJobId);
+  });
+}
+
+if (btnDeleteActiveJob) {
+  btnDeleteActiveJob.addEventListener("click", () => {
+    if (currentJobId) deleteJob(currentJobId);
+  });
+}
 
 // Filter pill events via event delegation
 const jobFilterPillsContainer = document.getElementById("jobFilterPills");
@@ -1040,6 +1215,20 @@ if (jobsListContainer) {
         switchTab("studio");
         appendLog(`Loaded settings from Job #${jobId.slice(-8)} into Studio.`, "info");
       }
+      return;
+    }
+
+    const cancelBtn = e.target.closest(".btn-job-cancel");
+    if (cancelBtn) {
+      const jobId = cancelBtn.dataset.jobId;
+      if (jobId) cancelJob(jobId);
+      return;
+    }
+
+    const deleteBtn = e.target.closest(".btn-job-delete");
+    if (deleteBtn) {
+      const jobId = deleteBtn.dataset.jobId;
+      if (jobId) deleteJob(jobId);
       return;
     }
   });
