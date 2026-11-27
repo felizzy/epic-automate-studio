@@ -19,6 +19,10 @@ import {
   getDoc, 
   updateDoc, 
   onSnapshot, 
+  collection,
+  query,
+  where,
+  getDocs,
   serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -69,6 +73,15 @@ const captionStyle = document.getElementById("captionStyle");
 const btnLaunch = document.getElementById("btnLaunch");
 const btnCancel = document.getElementById("btnCancel");
 
+// DOM Elements: AI Image Generation & Visual Styles
+const toggleAiGenerator = document.getElementById("toggleAiGenerator");
+const aiGeneratorOptions = document.getElementById("aiGeneratorOptions");
+const visualModeBadge = document.getElementById("visualModeBadge");
+const stockSourcesSection = document.getElementById("stockSourcesSection");
+const imageStyleSelect = document.getElementById("imageStyleSelect");
+const customStyleGroup = document.getElementById("customStyleGroup");
+const customStyleInput = document.getElementById("customStyleInput");
+
 // DOM Elements: Output & Media Player
 const mediaOutputCard = document.getElementById("mediaOutputCard");
 const finalVideoPlayer = document.getElementById("finalVideoPlayer");
@@ -85,6 +98,25 @@ const terminalOutput = document.getElementById("terminalOutput");
 const btnCopyLogs = document.getElementById("btnCopyLogs");
 const btnClearLogs = document.getElementById("btnClearLogs");
 
+// DOM Elements: Job History & Resume Engine
+const activeJobResumeBanner = document.getElementById("activeJobResumeBanner");
+const resumeBannerTitle = document.getElementById("resumeBannerTitle");
+const resumeBannerDesc = document.getElementById("resumeBannerDesc");
+const btnResumeActiveJob = document.getElementById("btnResumeActiveJob");
+const jobFilterPills = document.querySelectorAll(".filter-pill");
+const jobsListContainer = document.getElementById("jobsListContainer");
+const jobsEmptyState = document.getElementById("jobsEmptyState");
+const countAll = document.getElementById("countAll");
+const countRunning = document.getElementById("countRunning");
+const countCompleted = document.getElementById("countCompleted");
+const countFailed = document.getElementById("countFailed");
+const btnRefreshJobs = document.getElementById("btnRefreshJobs");
+
+// Global Jobs State
+let allJobs = [];
+let currentJobFilter = "all";
+let unsubscribeJobsSnapshot = null;
+
 // DOM Elements: Settings Tab
 const userProfileEmail = document.getElementById("userProfileEmail");
 const userProfileUid = document.getElementById("userProfileUid");
@@ -96,6 +128,7 @@ const cfgGithubRepo = document.getElementById("cfgGithubRepo");
 const cfgKaggleUser = document.getElementById("cfgKaggleUser");
 const cfgKaggleKey = document.getElementById("cfgKaggleKey");
 const cfgNvidiaKey = document.getElementById("cfgNvidiaKey");
+const cfgKieKey = document.getElementById("cfgKieKey");
 const cfgHfToken = document.getElementById("cfgHfToken");
 const cfgHfRepo = document.getElementById("cfgHfRepo");
 const cfgPexelsKey = document.getElementById("cfgPexelsKey");
@@ -171,6 +204,48 @@ toggleCaptions.addEventListener("change", () => {
   captionControls.style.display = toggleCaptions.checked ? "grid" : "none";
 });
 
+// AI Generator Toggle & Style Presets
+const STYLE_DESCRIPTIONS = {
+  hyper_realistic: "Hyper realistic photograph, 8k resolution, cinematic lighting, ultra-detailed, photorealistic",
+  claymation: "Claymation stop-motion style, handcrafted plasticine textures, miniature set, soft warm studio lighting, tactile clay aesthetic",
+  "2d_painting": "2D digital concept art painting, expressive brushstrokes, dynamic color palette, atmospheric concept art illustration",
+  "3d_pixar": "3D animated Disney Pixar style, vibrant expressive character lighting, smooth stylized textures, delightful cinematic 3D render",
+  anime: "Anime aesthetic, Studio Ghibli inspired, lush painted background, delicate line art, nostalgic warm lighting",
+  oil_painting: "Classical oil painting, rich canvas texture, masterwork chiaroscuro lighting, deep traditional oil colors, museum grade",
+  cyberpunk: "Cyberpunk sci-fi aesthetic, neon glowing reflections, rainy night megacity, volumetric hologram fog, futuristic high-tech",
+  custom: ""
+};
+
+if (toggleAiGenerator) {
+  toggleAiGenerator.addEventListener("change", () => {
+    const isAi = toggleAiGenerator.checked;
+    if (aiGeneratorOptions) aiGeneratorOptions.style.display = isAi ? "block" : "none";
+    if (stockSourcesSection) {
+      stockSourcesSection.style.opacity = isAi ? "0.45" : "1";
+      stockSourcesSection.style.pointerEvents = isAi ? "none" : "auto";
+    }
+    if (visualModeBadge) {
+      visualModeBadge.textContent = isAi ? "AI Z-Image" : "Stock Photos";
+      visualModeBadge.className = isAi ? "badge-mini badge-blue" : "badge-mini badge-purple";
+    }
+  });
+}
+
+if (imageStyleSelect) {
+  imageStyleSelect.addEventListener("change", () => {
+    const val = imageStyleSelect.value;
+    if (customStyleInput) {
+      if (val === "custom") {
+        customStyleInput.value = "";
+        customStyleInput.placeholder = "Type custom style (e.g. vintage 70s polaroid, watercolor, comic book)...";
+        customStyleInput.focus();
+      } else {
+        customStyleInput.value = STYLE_DESCRIPTIONS[val] || val;
+      }
+    }
+  });
+}
+
 // Load sample script
 btnLoadExample.addEventListener("click", () => {
   videoTitleInput.value = "The Wonders of the Deep Cosmos";
@@ -237,11 +312,26 @@ onAuthStateChanged(auth, async (user) => {
     
     // Load persistent user settings from Cloud Firestore
     await loadUserSettings(user.uid);
+    
+    // Listen in real-time to all executed jobs for this user
+    listenToAllJobs(user.uid);
   } else {
     currentUser = null;
+    if (unsubscribeJobsSnapshot) {
+      unsubscribeJobsSnapshot();
+      unsubscribeJobsSnapshot = null;
+    }
+    allJobs = [];
+    renderJobsList();
     authModal.style.display = "flex";
     statusPillLabel.textContent = "Signed Out";
     userInitial.textContent = "?";
+    if (cfgKieKey) cfgKieKey.value = "";
+    if (cfgGithubPat) cfgGithubPat.value = "";
+    if (cfgHfToken) cfgHfToken.value = "";
+    if (cfgNvidiaKey) cfgNvidiaKey.value = "";
+    if (cfgKaggleKey) cfgKaggleKey.value = "";
+    if (cfgKaggleUser) cfgKaggleUser.value = "";
   }
 });
 
@@ -299,18 +389,24 @@ async function loadUserSettings(userId) {
     if (snap.exists()) {
       const data = snap.data();
       if (data.github_pat && cfgGithubPat) cfgGithubPat.value = data.github_pat;
+
       if (data.settings && data.settings.github_repo && cfgGithubRepo) cfgGithubRepo.value = data.settings.github_repo;
       if (data.kaggle_username) cfgKaggleUser.value = data.kaggle_username;
       if (data.kaggle_key) cfgKaggleKey.value = data.kaggle_key;
+
       if (data.nvidia_api_key) cfgNvidiaKey.value = data.nvidia_api_key;
+
+      if (data.kie_api_key && cfgKieKey) cfgKieKey.value = data.kie_api_key;
+      else if (cfgKieKey) cfgKieKey.value = "";
+
       if (data.hf_token) cfgHfToken.value = data.hf_token;
+
       if (data.hf_dataset_repo) cfgHfRepo.value = data.hf_dataset_repo;
       if (data.pexels_key) cfgPexelsKey.value = data.pexels_key;
       if (data.unsplash_key) cfgUnsplashKey.value = data.unsplash_key;
       appendLog("Persistent user settings loaded from Cloud Firestore.", "sys");
     } else {
-      // First-time initialization: persist global default credentials for this user
-      await saveUserSettings(userId, false);
+      appendLog("User profile initialized. Enter credentials in Settings.", "info");
     }
   } catch (err) {
     console.warn("Could not load Firestore settings:", err);
@@ -324,6 +420,7 @@ async function saveUserSettings(userId, showToast = true) {
       kaggle_username: cfgKaggleUser ? cfgKaggleUser.value.trim() : "",
       kaggle_key: cfgKaggleKey ? cfgKaggleKey.value.trim() : "",
       nvidia_api_key: cfgNvidiaKey.value.trim(),
+      kie_api_key: cfgKieKey ? cfgKieKey.value.trim() : "",
       hf_token: cfgHfToken.value.trim(),
       hf_dataset_repo: cfgHfRepo.value.trim(),
       settings: {
@@ -382,6 +479,18 @@ btnLaunch.addEventListener("click", async () => {
     return;
   }
 
+  const isAiGen = toggleAiGenerator ? toggleAiGenerator.checked : false;
+  const chosenStyle = customStyleInput ? (customStyleInput.value.trim() || "Hyper realistic photograph, 8k resolution, cinematic lighting") : "Hyper realistic photograph, 8k resolution";
+  const kieKey = cfgKieKey ? cfgKieKey.value.trim() : "";
+
+  if (isAiGen && !kieKey) {
+    alert("Kie.ai API Key is required when using the AI Image Generator. Please enter your Kie.ai API key in the Settings tab.");
+    appendLog("⚠️ Kie.ai API Key missing in Settings. Please enter your key in Settings to generate AI images.", "warn");
+    switchTab("settings");
+    if (cfgKieKey) cfgKieKey.focus();
+    return;
+  }
+
   const selectedSources = [];
   if (srcPexels.checked) selectedSources.push("pexels");
   if (srcUnsplash.checked) selectedSources.push("unsplash");
@@ -410,16 +519,22 @@ btnLaunch.addEventListener("click", async () => {
       style: captionStyle.value
     },
     sources: selectedSources,
+    use_ai_generator: isAiGen,
+    image_style: chosenStyle,
+    kie_api_key: kieKey,
     nvidia_api_key: cfgNvidiaKey.value.trim(),
     kaggle_user: cfgKaggleUser.value.trim(),
     hf_dataset_repo: cfgHfRepo.value.trim(),
     status: "running",
     progress: 5,
-    current_milestone: `Job initialized with ${sentences.length} scenes. Dispatching to Kaggle T4 compute...`,
+    current_milestone: isAiGen 
+      ? `Job initialized with ${sentences.length} scenes. Generating AI prompts (${chosenStyle.slice(0, 30)}...)...`
+      : `Job initialized with ${sentences.length} scenes. Searching stock photography...`,
     cancel_requested: false,
     asset_url: null,
     asset_type: "video",
-    logs: [`[INITIALIZED] Split script into ${sentences.length} unique scenes.`],
+    completed_scenes: [],
+    logs: [`[INITIALIZED] Split script into ${sentences.length} unique scenes. Mode: ${isAiGen ? 'Kie.ai Z-Image' : 'Stock Photos'}.`],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -501,13 +616,14 @@ btnCancel.addEventListener("click", async () => {
 });
 
 // ==========================================================================
-// 6. Real-Time Snapshot Telemetry Listener
+// 6. Real-Time Snapshot Telemetry Listener & Active Job Banner
 // ==========================================================================
 function listenToJob(jobId) {
   if (unsubscribeJobSnapshot) {
     unsubscribeJobSnapshot();
   }
 
+  currentJobId = jobId;
   jobIdLabel.textContent = `Active Job ID: ${jobId}`;
 
   const jobDocRef = doc(db, "automations", jobId);
@@ -526,12 +642,14 @@ function listenToJob(jobId) {
 
     if (data.logs && Array.isArray(data.logs)) {
       data.logs.forEach(logLine => {
-        // Only append if not already logged
         appendLog(logLine, status === "failed" ? "error" : "info");
       });
     } else {
       appendLog(`[${status.toUpperCase()}] ${milestone}`);
     }
+
+    // Update Resume Banner for Active Job
+    updateActiveJobResumeBanner(data);
 
     // Terminal completion / failure states
     if (status === "completed") {
@@ -550,7 +668,6 @@ function listenToJob(jobId) {
         finalVideoPlayer.src = data.asset_url;
         finalVideoPlayer.load();
         btnDownloadVideo.href = data.asset_url;
-        switchTab("studio");
       }
     } else if (status === "cancelled") {
       if (githubWatcherInterval) {
@@ -570,6 +687,358 @@ function listenToJob(jobId) {
       btnCancel.disabled = true;
       progressFill.style.background = "#f59e0b";
       appendLog(`⚠️ Job failed: ${milestone}`, "error");
+    }
+  });
+}
+
+// Update the Active Job Resume Alert Banner
+function updateActiveJobResumeBanner(jobData) {
+  if (!activeJobResumeBanner) return;
+
+  const data = jobData || (currentJobId ? allJobs.find(j => (j.jobId || j.job_id || j.id) === currentJobId) : null);
+  if (!data) {
+    activeJobResumeBanner.style.display = "none";
+    return;
+  }
+
+  const status = (data.status || "").toLowerCase();
+  const cachedCount = (data.completed_scenes && Array.isArray(data.completed_scenes)) ? data.completed_scenes.length : 0;
+  const totalCount = data.sentence_count || (data.sentences && data.sentences.length) || 0;
+
+  // Show if job is failed, cancelled, or halted partially
+  if (status === "failed" || status === "cancelled" || (status !== "completed" && cachedCount > 0)) {
+    activeJobResumeBanner.style.display = "flex";
+    if (cachedCount > 0) {
+      resumeBannerTitle.textContent = `Job Stopped: ${cachedCount}/${totalCount} Scenes Cached in Cloud`;
+      resumeBannerDesc.textContent = `Resuming now will reuse all ${cachedCount} already generated images. Zero Kie.ai credits will be wasted!`;
+    } else {
+      resumeBannerTitle.textContent = `Job Halted: Execution ${status.toUpperCase()}`;
+      resumeBannerDesc.textContent = `You can restart the workflow runner to re-attempt scene generation.`;
+    }
+  } else {
+    activeJobResumeBanner.style.display = "none";
+  }
+}
+
+// ==========================================================================
+// 6.5 All Executed Jobs Directory & Credit-Preserving Resume Engine
+// ==========================================================================
+function listenToAllJobs(userId) {
+  if (unsubscribeJobsSnapshot) {
+    unsubscribeJobsSnapshot();
+    unsubscribeJobsSnapshot = null;
+  }
+
+  if (!userId) return;
+
+  const q = query(
+    collection(db, "automations"),
+    where("userId", "==", userId)
+  );
+
+  unsubscribeJobsSnapshot = onSnapshot(q, (snapshot) => {
+    allJobs = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      allJobs.push({
+        ...data,
+        id: docSnap.id,
+        jobId: data.jobId || data.job_id || docSnap.id
+      });
+    });
+
+    // Sort descending by created_at or updated_at
+    allJobs.sort((a, b) => {
+      const timeA = new Date(a.created_at || a.updated_at || 0).getTime();
+      const timeB = new Date(b.created_at || b.updated_at || 0).getTime();
+      return timeB - timeA;
+    });
+
+    updateJobFilterCounts();
+    renderJobsList();
+    updateActiveJobResumeBanner();
+  }, (err) => {
+    console.warn("Real-time all jobs listener notice:", err);
+  });
+}
+
+function updateJobFilterCounts() {
+  const counts = {
+    all: allJobs.length,
+    running: 0,
+    completed: 0,
+    failed: 0
+  };
+
+  allJobs.forEach(job => {
+    const s = (job.status || "running").toLowerCase();
+    if (s === "running" || s === "queued") counts.running++;
+    else if (s === "completed") counts.completed++;
+    else if (s === "failed" || s === "cancelled") counts.failed++;
+  });
+
+  if (countAll) countAll.textContent = counts.all;
+  if (countRunning) countRunning.textContent = counts.running;
+  if (countCompleted) countCompleted.textContent = counts.completed;
+  if (countFailed) countFailed.textContent = counts.failed;
+}
+
+function renderJobsList() {
+  if (!jobsListContainer) return;
+
+  // Filter jobs
+  const filtered = allJobs.filter(job => {
+    const s = (job.status || "running").toLowerCase();
+    if (currentJobFilter === "running") return s === "running" || s === "queued";
+    if (currentJobFilter === "completed") return s === "completed";
+    if (currentJobFilter === "failed") return s === "failed" || s === "cancelled";
+    return true; // "all"
+  });
+
+  if (filtered.length === 0) {
+    jobsListContainer.innerHTML = `
+      <div class="jobs-empty-state">
+        <span class="empty-icon">📂</span>
+        <p>${currentJobFilter === 'all' 
+          ? 'No executed jobs found yet. Launch a video pipeline in the Studio tab!' 
+          : `No ${currentJobFilter} jobs found.`}</p>
+      </div>
+    `;
+    return;
+  }
+
+  const html = filtered.map(job => {
+    const jId = job.jobId || job.id;
+    const status = (job.status || "running").toLowerCase();
+    const isActive = currentJobId === jId;
+    const progress = Math.min(100, Math.max(0, job.progress || 0));
+    const cachedCount = (job.completed_scenes && Array.isArray(job.completed_scenes)) ? job.completed_scenes.length : 0;
+    const sceneCount = job.sentence_count || (job.sentences && job.sentences.length) || 0;
+    
+    // Format timestamp
+    let timeStr = "";
+    if (job.created_at) {
+      try {
+        const d = new Date(job.created_at);
+        timeStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + " at " + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch (_) {
+        timeStr = job.created_at;
+      }
+    } else {
+      timeStr = "Recent";
+    }
+
+    // Determine mode tag
+    let modeTag = "📸 Stock Photos";
+    if (job.use_ai_generator) {
+      const styleName = job.image_style ? job.image_style.slice(0, 20) : "Hyper Realistic";
+      modeTag = `🎨 Kie.ai Z-Image (${styleName})`;
+    }
+
+    const canResume = status === "failed" || status === "cancelled" || (status === "running" && progress < 100);
+
+    return `
+      <div class="job-item-card ${isActive ? 'is-active-job' : ''}" data-job-id="${escapeHtml(jId)}">
+        <div class="job-item-header">
+          <div class="job-title-group">
+            <div class="job-item-title">${escapeHtml(job.title || "Untitled Video Automation")}</div>
+            <div class="job-item-id-time">
+              <span>#${escapeHtml(jId.slice(-8))}</span>
+              <span>•</span>
+              <span>${escapeHtml(timeStr)}</span>
+            </div>
+          </div>
+          <span class="job-status-pill status-${status}">
+            ${status === 'running' ? '<span class="pulse-dot"></span>' : ''}
+            ${status}
+          </span>
+        </div>
+
+        <div class="job-meta-row">
+          <span class="job-tag">${modeTag}</span>
+          <span class="job-tag">${sceneCount} scenes</span>
+          ${cachedCount > 0 ? `<span class="job-tag job-tag-credit">💾 ${cachedCount}/${sceneCount} scenes cached (credits safe)</span>` : ''}
+          ${job.voice ? `<span class="job-tag">🗣 ${escapeHtml(job.voice)}</span>` : ''}
+        </div>
+
+        <div class="job-progress-row">
+          <div class="job-progress-header">
+            <span class="job-milestone-snippet">${escapeHtml(job.current_milestone || "Processing...")}</span>
+            <span class="job-pct-val">${progress}%</span>
+          </div>
+          <div class="job-progress-bar">
+            <div class="job-progress-fill" style="width: ${progress}%; ${status === 'completed' ? 'background: #10b981;' : status === 'failed' ? 'background: #ef4444;' : ''}"></div>
+          </div>
+        </div>
+
+        <div class="job-actions-row">
+          <button type="button" class="btn-job-action btn-job-view" data-job-id="${escapeHtml(jId)}">
+            📊 View Telemetry
+          </button>
+          ${canResume ? `
+            <button type="button" class="btn-job-action btn-job-resume" data-job-id="${escapeHtml(jId)}">
+              ⚡ Resume (${cachedCount > 0 ? 'Reuse ' + cachedCount + ' Images' : 'Retry'})
+            </button>
+          ` : ''}
+          ${job.asset_url && status === 'completed' ? `
+            <button type="button" class="btn-job-action btn-job-watch" data-asset-url="${escapeHtml(job.asset_url)}">
+              🎬 Watch Video
+            </button>
+          ` : ''}
+          ${job.script ? `
+            <button type="button" class="btn-job-action btn-job-edit" data-job-id="${escapeHtml(jId)}">
+              📋 Load in Studio
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  jobsListContainer.innerHTML = html;
+}
+
+// Select a job to view in telemetry & logs
+function selectJob(jobId) {
+  currentJobId = jobId;
+  listenToJob(jobId);
+  renderJobsList();
+  
+  // Repopulate terminal output with selected job's logs
+  const selectedJob = allJobs.find(j => (j.jobId || j.id) === jobId);
+  if (selectedJob) {
+    terminalOutput.innerHTML = `<div class="term-line sys"><span class="term-time">[SYSTEM]</span> Switched live telemetry focus to Job #${jobId.slice(-8)}.</div>`;
+    if (selectedJob.logs && Array.isArray(selectedJob.logs)) {
+      selectedJob.logs.forEach(l => appendLog(l, selectedJob.status === "failed" ? "error" : "info"));
+    }
+  }
+
+  // Scroll to telemetry card smoothly
+  const telemetryCard = document.querySelector(".ios-card");
+  if (telemetryCard) {
+    telemetryCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+// Resume a failed, cancelled, or partial job without re-spending Kie.ai credits
+async function resumeJob(job) {
+  if (!job) return;
+  const jobId = job.jobId || job.id;
+  const cachedCount = (job.completed_scenes && Array.isArray(job.completed_scenes)) ? job.completed_scenes.length : 0;
+  const totalCount = job.sentence_count || (job.sentences && job.sentences.length) || 0;
+
+  appendLog(`[RESUME ENGINE] Initializing resume for Job #${jobId.slice(-8)}: "${job.title || 'Untitled'}"...`, "info");
+  if (cachedCount > 0) {
+    appendLog(`[CREDIT PROTECTION] Found ${cachedCount}/${totalCount} scenes already cached! Reusing existing images with zero credit loss.`, "success");
+  }
+
+  const jobDocRef = doc(db, "automations", jobId);
+  try {
+    await updateDoc(jobDocRef, {
+      status: "running",
+      cancel_requested: false,
+      current_milestone: `Resuming execution. Reusing ${cachedCount} cached scene images (credits preserved)...`,
+      updated_at: new Date().toISOString()
+    });
+
+    selectJob(jobId);
+    appendLog("Firestore state updated to RUNNING. Dispatching GitHub Actions compute runner...", "sys");
+
+    // Trigger GitHub Actions worker
+    await dispatchToGithubActions(jobId, job);
+  } catch (err) {
+    console.error("Resume failed:", err);
+    appendLog(`Resume failed: ${err.message}`, "error");
+  }
+}
+
+// Button to resume the currently active job
+btnResumeActiveJob.addEventListener("click", () => {
+  if (!currentJobId) return;
+  const activeJob = allJobs.find(j => (j.jobId || j.id) === currentJobId);
+  if (activeJob) {
+    resumeJob(activeJob);
+  }
+});
+
+// Filter pill events
+jobFilterPills.forEach(pill => {
+  pill.addEventListener("click", (e) => {
+    jobFilterPills.forEach(p => p.classList.remove("active"));
+    const target = e.currentTarget;
+    target.classList.add("active");
+    currentJobFilter = target.dataset.filter || "all";
+    renderJobsList();
+  });
+});
+
+// Refresh button event
+if (btnRefreshJobs) {
+  btnRefreshJobs.addEventListener("click", () => {
+    if (currentUser) {
+      appendLog("Refreshing job executions list...", "sys");
+      listenToAllJobs(currentUser.uid);
+    }
+  });
+}
+
+// Event delegation for job card buttons
+if (jobsListContainer) {
+  jobsListContainer.addEventListener("click", (e) => {
+    const viewBtn = e.target.closest(".btn-job-view");
+    if (viewBtn) {
+      const jobId = viewBtn.dataset.jobId;
+      if (jobId) selectJob(jobId);
+      return;
+    }
+
+    const resumeBtn = e.target.closest(".btn-job-resume");
+    if (resumeBtn) {
+      const jobId = resumeBtn.dataset.jobId;
+      const job = allJobs.find(j => (j.jobId || j.id) === jobId);
+      if (job) resumeJob(job);
+      return;
+    }
+
+    const watchBtn = e.target.closest(".btn-job-watch");
+    if (watchBtn) {
+      const assetUrl = watchBtn.dataset.assetUrl;
+      if (assetUrl) {
+        mediaOutputCard.style.display = "block";
+        finalAssetUrl.value = assetUrl;
+        finalVideoPlayer.src = assetUrl;
+        finalVideoPlayer.load();
+        btnDownloadVideo.href = assetUrl;
+        switchTab("studio");
+        mediaOutputCard.scrollIntoView({ behavior: "smooth" });
+      }
+      return;
+    }
+
+    const editBtn = e.target.closest(".btn-job-edit");
+    if (editBtn) {
+      const jobId = editBtn.dataset.jobId;
+      const job = allJobs.find(j => (j.jobId || j.id) === jobId);
+      if (job) {
+        if (job.title) videoTitleInput.value = job.title;
+        if (job.script) videoScriptInput.value = job.script;
+        if (job.voice) voiceSelect.value = job.voice;
+        if (job.speed) {
+          voiceSpeed.value = job.speed;
+          speedVal.textContent = job.speed + "x";
+        }
+        if (job.use_ai_generator !== undefined) {
+          toggleAiGenerator.checked = job.use_ai_generator;
+          toggleAiGenerator.dispatchEvent(new Event("change"));
+        }
+        if (job.image_style && customStyleInput) {
+          customStyleInput.value = job.image_style;
+        }
+        updateScriptStats();
+        switchTab("studio");
+        appendLog(`Loaded settings from Job #${jobId.slice(-8)} into Studio.`, "info");
+      }
+      return;
     }
   });
 }
@@ -595,11 +1064,11 @@ let githubWatcherInterval = null;
 let activeRunId = null;
 
 async function dispatchToGithubActions(jobId, jobData) {
-  const githubPat = cfgGithubPat ? cfgGithubPat.value.trim() : "";
-  const githubRepo = cfgGithubRepo ? cfgGithubRepo.value.trim() : "felizzy/epic-automate-studio";
-  const hfToken = cfgHfToken.value.trim();
-  const hfRepo = cfgHfRepo.value.trim();
-  const nvidiaKey = cfgNvidiaKey.value.trim();
+  const githubPat = (cfgGithubPat ? cfgGithubPat.value.trim() : "");
+  const githubRepo = (cfgGithubRepo ? cfgGithubRepo.value.trim() : "") || "felizzy/epic-automate-studio";
+  const hfToken = (cfgHfToken ? cfgHfToken.value.trim() : "");
+  const hfRepo = (cfgHfRepo ? cfgHfRepo.value.trim() : "") || "felizzy/epic-automation-assets";
+  const nvidiaKey = (cfgNvidiaKey ? cfgNvidiaKey.value.trim() : "");
   const jobDocRef = doc(db, "automations", jobId);
 
   if (!githubPat) {
@@ -618,7 +1087,10 @@ async function dispatchToGithubActions(jobId, jobData) {
         firebase_project_id: "epic-studio-94147",
         hf_dataset_repo: hfRepo,
         hf_token: hfToken,
-        nvidia_api_key: nvidiaKey
+        nvidia_api_key: nvidiaKey,
+        use_ai_generator: (jobData.use_ai_generator ? "true" : "false"),
+        image_style: (jobData.image_style || "hyper realistic"),
+        kie_api_key: (jobData.kie_api_key || "")
       }
     };
 
