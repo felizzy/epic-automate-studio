@@ -1013,25 +1013,33 @@ input:checked + .switch-slider:before {
   border: 1px solid var(--border-glass);
 }
 
+button.filter-pill,
 .filter-pill {
   background: transparent;
+  background-color: transparent;
   border: none;
+  outline: none;
   color: var(--text-muted);
+  font-family: inherit;
   font-size: 11.5px;
   font-weight: 600;
-  padding: 5px 12px;
+  padding: 6px 14px;
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition: all 0.2s ease;
+  user-select: none;
 }
 
+button.filter-pill:hover,
 .filter-pill:hover {
   color: var(--text-main);
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
+button.filter-pill.active,
 .filter-pill.active {
-  background: var(--accent-primary-gradient);
-  color: #fff;
+  background: var(--accent-primary-gradient) !important;
+  color: #fff !important;
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
