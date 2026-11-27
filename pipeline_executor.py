@@ -644,6 +644,7 @@ def assemble_scene_video(image_path: str, audio_path: str, sentence: str, durati
         "-vf", filter_graph,
         "-c:v", "libx264", "-tune", "stillimage",
         "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         "-t", f"{duration:.3f}",
         "-shortest",
         out_video
@@ -674,6 +675,7 @@ def concatenate_scenes(scene_videos: List[str], final_output: str = "final_outpu
         "-i", concat_list,
         "-c:v", "libx264", "-c:a", "aac",
         "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         final_output
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
