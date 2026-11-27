@@ -82,6 +82,11 @@
   - **Persistent Active State across Page Refresh & Device Shutdown**: Implemented `localStorage` state persistence (`epic_active_job_id`) and auto-attach logic. When the user refreshes their page or reopens the app after shutting down their device, the app automatically attaches to their active or running job without interrupting execution or resetting telemetry.
   - **Live Kie.ai Credit Balance Display**: Integrated live balance fetching from `GET https://api.kie.ai/api/v1/chat/credit` with direct CORS support. Displays real-time credit balance in the app header pill (`#kieCreditPill`), Visual Scene Engine card badge (`#studioKieCreditBadge`), and Settings tab (`#settingsKieCreditVal`), complete with micro-refresh buttons.
   - **Deployment**: Pushed backend & frontend updates to GitHub repository `felizzy/epic-automate-studio` and deployed to Firebase Hosting (`https://epic-studio-94147.web.app`).
+- **2026-11-27**: Resolved **Click-Swallowing Race Condition, Log Flooding, and Blocked Native Alerts/Confirms**:
+  - **In-Place DOM Updating**: Replaced destructive `innerHTML` re-rendering of the entire job list on every Firestore snapshot tick with selective in-place element patching. Preserves all button DOM nodes during live job progress so user clicks on "View Telemetry", "Resume", "Cancel", and "Delete" are never swallowed or detached.
+  - **Log Deduplication & Console Buffer Cap**: Added `seenLogsForJob` set tracking and 150-line terminal cap, eliminating log flooding and memory churn.
+  - **Non-Blocking In-App Dialogs & Validation Toasts**: Replaced all native `alert()` and `confirm()` calls with a non-blocking in-app iOS confirmation modal (`#confirmModal`) and floating toast notifications (`#appToast`) with glowing input validation animations, guaranteeing responsiveness across all browser environments and embedded webviews.
+  - **List Flickering Fix**: Stabilized `listenToAllJobs` to accumulate snapshots into a fresh array before swapping `allJobs`, eliminating temporary count drops on manual refresh.
 
 ---
 
