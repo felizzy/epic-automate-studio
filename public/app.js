@@ -1181,18 +1181,23 @@ function renderJobsList() {
 function selectJob(jobId) {
   currentJobId = jobId;
   localStorage.setItem("epic_active_job_id", jobId);
-  listenToJob(jobId);
-  renderJobsList();
-  
-  // Repopulate terminal output with selected job's logs
+
+  seenLogsForJob.clear();
+  lastSeenMilestone = "";
+
   const selectedJob = allJobs.find(j => (j.jobId || j.id) === jobId);
   if (selectedJob) {
     terminalOutput.innerHTML = `<div class="term-line sys"><span class="term-time">[SYSTEM]</span> Switched live telemetry focus to Job #${jobId.slice(-8)}.</div>`;
     if (selectedJob.logs && Array.isArray(selectedJob.logs)) {
-      selectedJob.logs.forEach(l => appendLog(l, selectedJob.status === "failed" ? "error" : "info"));
+      selectedJob.logs.forEach(l => {
+        seenLogsForJob.add(l);
+        appendLog(l, selectedJob.status === "failed" ? "error" : "info");
+      });
     }
   }
 
+  listenToJob(jobId);
+  renderJobsList();
   updateActiveJobResumeBanner(selectedJob);
 
   // Scroll to telemetry card smoothly
