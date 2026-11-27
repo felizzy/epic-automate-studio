@@ -1400,3 +1400,76 @@ button.filter-pill.active,
   border-radius: var(--radius-pill);
   border: 1px solid rgba(16, 185, 129, 0.25);
 }
+
+/* ==========================================================================
+   Non-blocking In-App Confirm Modal & Floating Toast
+   ========================================================================== */
+.modal-btn-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.confirm-modal-card {
+  max-width: 400px;
+}
+
+.ios-floating-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  background: rgba(23, 28, 42, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65);
+  padding: 12px 24px;
+  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #ffffff;
+  z-index: 2000;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: toastFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.ios-floating-toast.toast-warn {
+  border-color: rgba(245, 158, 11, 0.6);
+  color: #fef08a;
+  background: rgba(36, 28, 16, 0.96);
+}
+
+.ios-floating-toast.toast-error {
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  background: rgba(38, 18, 22, 0.96);
+}
+
+.ios-floating-toast.toast-success {
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #6ee7b7;
+  background: rgba(16, 36, 28, 0.96);
+}
+
+@keyframes toastFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.input-error-glow {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35) !important;
+  animation: shake 0.4s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
