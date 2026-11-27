@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Epic Automate Studio ⚡</title>
-  <link rel="stylesheet" href="style.css?v=20261127_v2">
+  <link rel="stylesheet" href="style.css?v=20261127_v4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <!-- Firebase Modular SDK -->
-  <script type="module" src="app.js?v=20261127_v2"></script>
+  <script type="module" src="app.js?v=20261127_v4"></script>
 </head>
 <body class="ios-theme">
   <!-- Glassmorphic App Shell -->
@@ -29,6 +29,13 @@
 
       <!-- Live Connection / User Pill -->
       <div class="header-right">
+        <!-- Live Kie.ai Credit Balance Pill -->
+        <div class="kie-credit-pill" id="kieCreditPill" title="Kie.ai Available Generation Balance">
+          <span class="credit-pill-icon">💳</span>
+          <span class="credit-pill-label" id="kieCreditValue">-- Credits</span>
+          <button type="button" class="btn-micro-refresh" id="btnRefreshCredit" title="Refresh Live Balance">🔄</button>
+        </div>
+
         <div class="ios-status-pill" id="statusPill">
           <span class="status-indicator-dot online"></span>
           <span id="statusPillLabel">Connected</span>
@@ -206,7 +213,10 @@
                 <p class="card-subheading">Generate custom AI images via Kie.ai Z-Image or search curated stock photography</p>
               </div>
             </div>
-            <span class="badge-mini badge-purple" id="visualModeBadge">Stock Photos</span>
+            <div class="engine-badge-group">
+              <span class="badge-mini badge-credit" id="studioKieCreditBadge">💳 <span id="studioKieCreditVal">-- Credits</span></span>
+              <span class="badge-mini badge-purple" id="visualModeBadge">Stock Photos</span>
+            </div>
           </div>
 
           <!-- Toggle: Use AI Image Generator -->
@@ -351,6 +361,16 @@
               <span>Resume Job Now</span>
             </button>
           </div>
+
+          <!-- Active Job Management Bar (Cancel Running / Delete Stopped) -->
+          <div id="activeJobControlsBar" class="active-job-controls-bar" style="display: none;">
+            <button type="button" id="btnCancelActiveJob" class="btn-job-action btn-job-cancel" style="display: none;">
+              <span>⏹ Cancel Active Run</span>
+            </button>
+            <button type="button" id="btnDeleteActiveJob" class="btn-job-action btn-job-delete">
+              <span>🗑 Delete Job Record</span>
+            </button>
+          </div>
         </div>
 
         <!-- All Job Executions & History Card -->
@@ -460,7 +480,10 @@
               </div>
 
               <div class="form-field">
-                <label for="cfgKieKey">Kie.ai API Key (Z-Image Generator)</label>
+                <div class="label-row">
+                  <label for="cfgKieKey">Kie.ai API Key (Z-Image Generator)</label>
+                  <span class="field-credit-label" id="settingsKieCreditVal">💳 --</span>
+                </div>
                 <input type="password" id="cfgKieKey" class="ios-input" placeholder="Bearer key from kie.ai" value="">
                 <span class="field-hint">Required for AI Image Generator mode. Strictly isolated to your user account.</span>
               </div>
