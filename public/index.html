@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Epic Automate Studio ⚡</title>
-  <link rel="stylesheet" href="style.css?v=20261127_v4">
+  <link rel="stylesheet" href="style.css?v=20261127_v5">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <!-- Firebase Modular SDK -->
-  <script type="module" src="app.js?v=20261127_v4"></script>
+  <script type="module" src="app.js?v=20261127_v5"></script>
 </head>
 <body class="ios-theme">
   <!-- Glassmorphic App Shell -->
@@ -572,6 +572,29 @@
         </div>
       </form>
     </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- IN-APP CONFIRMATION MODAL (NON-BLOCKING)   -->
+  <!-- ========================================== -->
+  <div id="confirmModal" class="ios-modal-backdrop" style="display: none;">
+    <div class="ios-modal-card confirm-modal-card">
+      <div class="auth-header">
+        <div class="auth-icon-circle" id="confirmModalIcon">⚠️</div>
+        <h2 class="auth-title" id="confirmModalTitle">Confirm Action</h2>
+        <p class="auth-subtitle" id="confirmModalMessage">Are you sure you want to proceed?</p>
+      </div>
+      <div class="modal-btn-row">
+        <button type="button" id="btnConfirmCancel" class="ios-btn ios-btn-secondary">Cancel</button>
+        <button type="button" id="btnConfirmOk" class="ios-btn ios-btn-danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING APP TOAST -->
+  <div id="appToast" class="ios-floating-toast" style="display: none;">
+    <span id="appToastIcon">⚡</span>
+    <span id="appToastText">Message</span>
   </div>
 
 </body>
