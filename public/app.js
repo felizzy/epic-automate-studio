@@ -709,6 +709,10 @@ btnLaunch.addEventListener("click", async () => {
   btnLaunch.disabled = true;
   btnCancel.disabled = false;
   mediaOutputCard.style.display = "none";
+  if (currentVideoBlobUrl) {
+    try { URL.revokeObjectURL(currentVideoBlobUrl); } catch (_) {}
+    currentVideoBlobUrl = null;
+  }
   finalVideoPlayer.src = "";
 
   appendLog(`🚀 Launching Job ${jobId}: "${title}" with ${sentences.length} scenes...`, "info");
@@ -745,8 +749,120 @@ btnCancel.addEventListener("click", () => {
 });
 
 // ==========================================================================
-// 6. Real-Time Snapshot Telemetry Listener & Active Job Banner
+// 6. Real-Time Snapshot Telemetry Listener & Media Loader
 // ==========================================================================
+let currentVideoBlobUrl = null;
+
+async function loadVideoIntoPlayer(videoUrl) {
+  if (!videoUrl || !finalVideoPlayer) return;
+
+  if (currentVideoBlobUrl) {
+    try {
+      URL.revokeObjectURL(currentVideoBlobUrl);
+    } catch (_) {}
+    currentVideoBlobUrl = null;
+  }
+
+  mediaOutputCard.style.display = "block";
+  finalAssetUrl.value = videoUrl;
+  btnDownloadVideo.href = videoUrl;
+
+  const directBtn = document.getElementById("btnDirectPlay");
+  if (directBtn) directBtn.href = videoUrl;
+
+  const fallbackBanner = document.getElementById("videoFallbackBanner");
+  if (fallbackBanner) fallbackBanner.style.display = "none";
+
+  const spinner = document.getElementById("videoLoadingSpinner");
+  if (spinner) spinner.style.display = "flex";
+
+  let isLoaded = false;
+  let fallbackAttempted = false;
+
+  const cleanupListeners = () => {
+    finalVideoPlayer.onplaying = null;
+    finalVideoPlayer.onloadeddata = null;
+    finalVideoPlayer.oncanplay = null;
+    finalVideoPlayer.onerror = null;
+  };
+
+  const attemptBlobFallback = async (reason) => {
+    if (isLoaded || fallbackAttempted) return;
+    fallbackAttempted = true;
+    cleanupListeners();
+    console.warn(`Direct video playback failed (${reason}). Fetching in-memory blob buffer for:`, videoUrl);
+    if (spinner) spinner.style.display = "flex";
+
+    try {
+      const res = await fetch(videoUrl, { mode: "cors" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      currentVideoBlobUrl = URL.createObjectURL(blob);
+
+      finalVideoPlayer.onerror = () => {
+        if (spinner) spinner.style.display = "none";
+        if (fallbackBanner) fallbackBanner.style.display = "flex";
+        appendLog("Inline player playback restricted. Use 'Open Video in New Tab' to watch.", "warn");
+      };
+
+      finalVideoPlayer.oncanplay = () => {
+        isLoaded = true;
+        if (spinner) spinner.style.display = "none";
+        if (fallbackBanner) fallbackBanner.style.display = "none";
+      };
+
+      finalVideoPlayer.onplaying = () => {
+        isLoaded = true;
+        if (spinner) spinner.style.display = "none";
+        if (fallbackBanner) fallbackBanner.style.display = "none";
+      };
+
+      finalVideoPlayer.src = currentVideoBlobUrl;
+      finalVideoPlayer.load();
+      finalVideoPlayer.play().catch(() => {});
+      appendLog("Video loaded via secure in-memory buffer.", "success");
+    } catch (e) {
+      console.warn("Blob fallback failed:", e);
+      if (spinner) spinner.style.display = "none";
+      if (fallbackBanner) fallbackBanner.style.display = "flex";
+      appendLog("Playback notice: Click 'Open Video in New Tab' or 'Download' to view the media file.", "info");
+    }
+  };
+
+  finalVideoPlayer.onplaying = () => {
+    isLoaded = true;
+    if (spinner) spinner.style.display = "none";
+    if (fallbackBanner) fallbackBanner.style.display = "none";
+  };
+
+  finalVideoPlayer.onloadeddata = () => {
+    isLoaded = true;
+    if (spinner) spinner.style.display = "none";
+    if (fallbackBanner) fallbackBanner.style.display = "none";
+  };
+
+  finalVideoPlayer.oncanplay = () => {
+    isLoaded = true;
+    if (spinner) spinner.style.display = "none";
+    if (fallbackBanner) fallbackBanner.style.display = "none";
+  };
+
+  finalVideoPlayer.onerror = () => {
+    attemptBlobFallback("media_error");
+  };
+
+  // Set direct source and trigger load
+  finalVideoPlayer.src = videoUrl;
+  finalVideoPlayer.load();
+
+  // Safety timer: if after 5 seconds neither loaded nor error fired, attempt blob fallback
+  setTimeout(() => {
+    if (!isLoaded && !fallbackAttempted) {
+      attemptBlobFallback("timeout");
+    }
+  }, 5000);
+}
+
 let seenLogsForJob = new Set();
 let lastSeenMilestone = "";
 
@@ -805,11 +921,7 @@ function listenToJob(jobId) {
       appendLog("🎉 Automation completed successfully!", "success");
 
       if (data.asset_url) {
-        mediaOutputCard.style.display = "block";
-        finalAssetUrl.value = data.asset_url;
-        finalVideoPlayer.src = data.asset_url;
-        finalVideoPlayer.load();
-        btnDownloadVideo.href = data.asset_url;
+        loadVideoIntoPlayer(data.asset_url);
       }
     } else if (status === "cancelled") {
       if (githubWatcherInterval) {
@@ -1402,11 +1514,7 @@ if (jobsListContainer) {
     if (watchBtn) {
       const assetUrl = watchBtn.dataset.assetUrl;
       if (assetUrl) {
-        mediaOutputCard.style.display = "block";
-        finalAssetUrl.value = assetUrl;
-        finalVideoPlayer.src = assetUrl;
-        finalVideoPlayer.load();
-        btnDownloadVideo.href = assetUrl;
+        loadVideoIntoPlayer(assetUrl);
         switchTab("studio");
         mediaOutputCard.scrollIntoView({ behavior: "smooth" });
         showAppToast("Video loaded in Studio tab.", "info");
@@ -1468,11 +1576,7 @@ btnCopyAssetUrl.addEventListener("click", () => {
   });
 });
 
-if (finalVideoPlayer) {
-  finalVideoPlayer.addEventListener("error", () => {
-    appendLog("Video player notice: If direct video playback is restricted by source host, click 'Copy Link' or 'Download' to view the media file directly.", "info");
-  });
-}
+
 
 // Initial stats update
 updateScriptStats();
