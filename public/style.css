@@ -1527,3 +1527,19 @@ button.filter-pill.active,
   color: #fef08a;
   flex-wrap: wrap;
 }
+
+@media (max-width: 580px) {
+  .ios-nav-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .header-right {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .ios-status-pill {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+}
