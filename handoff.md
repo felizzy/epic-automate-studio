@@ -87,6 +87,11 @@
   - **Log Deduplication & Console Buffer Cap**: Added `seenLogsForJob` set tracking and 150-line terminal cap, eliminating log flooding and memory churn.
   - **Non-Blocking In-App Dialogs & Validation Toasts**: Replaced all native `alert()` and `confirm()` calls with a non-blocking in-app iOS confirmation modal (`#confirmModal`) and floating toast notifications (`#appToast`) with glowing input validation animations, guaranteeing responsiveness across all browser environments and embedded webviews.
   - **List Flickering Fix**: Stabilized `listenToAllJobs` to accumulate snapshots into a fresh array before swapping `allJobs`, eliminating temporary count drops on manual refresh.
+- **2026-11-27**: Resolved **Generated Video Playback Failure & Cross-Origin CDN Issues**:
+  - **FFmpeg `-movflags +faststart`**: Added `-movflags +faststart` to FFmpeg scene assembly and concatenation in both `pipeline_executor.py` and `kaggle_executor.py`. This moves the MP4 `moov` atom (metadata/duration/index) to the very beginning of the file, allowing instant progressive streaming across all modern web browsers.
+  - **In-Memory Blob Fallback Streamer (`loadVideoIntoPlayer`)**: Implemented robust progressive loading in `public/app.js` with an automatic fallback mechanism: if direct CDN video streaming encounters an ORB/CORS block or media decode issue, it automatically performs a CORS `fetch(videoUrl)` to stream the video into an in-memory `Blob` (`URL.createObjectURL(blob)`), bypassing cross-origin restrictions seamlessly.
+  - **Fallback Banner & Buffering Spinner**: Added `#videoLoadingSpinner` (buffering ring overlay) and `#videoFallbackBanner` with direct open button (`#btnDirectPlay`) in `public/index.html` and `public/style.css` so users always have alternative viewing options.
+  - **Cache Invalidation & Firestore Fixes**: Added `Cache-Control: no-cache, no-store, must-revalidate` in `firebase.json` for HTML, CSS, and JS. Updated seeded Firestore jobs to valid Hugging Face video URLs.
 
 ---
 
