@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Epic Automate Studio ⚡</title>
-  <link rel="stylesheet" href="style.css?v=20261127_v7">
+  <link rel="stylesheet" href="style.css?v=20261127_v8">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <!-- Firebase Modular SDK -->
-  <script type="module" src="app.js?v=20261127_v7"></script>
+  <script type="module" src="app.js?v=20261127_v8"></script>
 </head>
 <body class="ios-theme">
   <!-- Glassmorphic App Shell -->
@@ -299,9 +299,19 @@
 
           <!-- Video Player -->
           <div class="video-wrapper">
-            <video id="finalVideoPlayer" controls playsinline preload="metadata">
+            <video id="finalVideoPlayer" controls playsinline preload="auto">
               Your browser does not support the video tag.
             </video>
+            <div id="videoLoadingSpinner" class="video-loading-overlay" style="display: none;">
+              <div class="spinner-ring"></div>
+              <span>Buffering video from cloud...</span>
+            </div>
+          </div>
+
+          <!-- Video Fallback Banner -->
+          <div id="videoFallbackBanner" class="video-fallback-banner" style="display: none;">
+            <span>⚠️ If inline player playback is restricted by your browser, watch directly:</span>
+            <a id="btnDirectPlay" href="#" target="_blank" class="ios-btn ios-btn-primary btn-sm">▶ Open Video in New Tab</a>
           </div>
 
           <!-- Asset Link & Actions -->
