@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Epic Automate Studio ⚡</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20261127_v2">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <!-- Firebase Modular SDK -->
-  <script type="module" src="app.js?v=20261122_actions"></script>
+  <script type="module" src="app.js?v=20261127_v2"></script>
 </head>
 <body class="ios-theme">
   <!-- Glassmorphic App Shell -->
@@ -47,7 +47,7 @@
       </button>
       <button class="seg-btn" data-tab="logs">
         <span class="seg-icon">⚡</span>
-        <span class="seg-label">Live Monitor</span>
+        <span class="seg-label">Logs & Monitor</span>
         <span class="badge-dot" id="logBadgeDot" style="display: none;"></span>
       </button>
       <button class="seg-btn" data-tab="settings">
@@ -354,7 +354,7 @@
         </div>
 
         <!-- All Job Executions & History Card -->
-        <div class="ios-card glass-panel job-history-card">
+        <div id="jobHistoryCard" class="ios-card glass-panel job-history-card">
           <div class="card-title-row">
             <div class="title-with-icon">
               <span class="card-icon">📋</span>
