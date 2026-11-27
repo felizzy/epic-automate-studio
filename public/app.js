@@ -304,7 +304,7 @@ btnLoadExample.addEventListener("click", () => {
 });
 
 // ==========================================================================
-// 2. Logging & Terminal Console
+// 2. Logging, Terminal Console & In-App UI Dialogs
 // ==========================================================================
 function appendLog(message, type = "info") {
   const line = document.createElement("div");
@@ -314,7 +314,84 @@ function appendLog(message, type = "info") {
   line.innerHTML = `<span class="term-time">[${timeStr}]</span> ${escapeHtml(message)}`;
   
   terminalOutput.appendChild(line);
+  // Cap terminal lines at 150 to keep DOM lightning fast and avoid memory churn
+  while (terminalOutput.children.length > 150) {
+    terminalOutput.removeChild(terminalOutput.firstElementChild);
+  }
   terminalOutput.scrollTop = terminalOutput.scrollHeight;
+}
+
+// In-app non-blocking confirmation dialog (never suppressed by browser popup blockers)
+function showAppConfirm(title, message, confirmText = "Confirm", isDanger = false, icon = "⚠️") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("confirmModal");
+    const titleEl = document.getElementById("confirmModalTitle");
+    const msgEl = document.getElementById("confirmModalMessage");
+    const okBtn = document.getElementById("btnConfirmOk");
+    const cancelBtn = document.getElementById("btnConfirmCancel");
+    const iconEl = document.getElementById("confirmModalIcon");
+
+    if (!modal || !okBtn || !cancelBtn) {
+      resolve(window.confirm(`${title}\n\n${message}`));
+      return;
+    }
+
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
+    if (iconEl) iconEl.textContent = icon;
+    okBtn.textContent = confirmText;
+    okBtn.className = isDanger ? "ios-btn ios-btn-danger" : "ios-btn ios-btn-primary";
+
+    modal.style.display = "flex";
+
+    const cleanup = () => {
+      modal.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+    };
+
+    const onOk = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+  });
+}
+
+// In-app floating toast banner
+let toastTimeout = null;
+function showAppToast(message, type = "info") {
+  const toast = document.getElementById("appToast");
+  const textEl = document.getElementById("appToastText");
+  const iconEl = document.getElementById("appToastIcon");
+  if (!toast || !textEl) {
+    appendLog(message, type);
+    return;
+  }
+
+  if (toastTimeout) {
+    clearTimeout(toastTimeout);
+    toastTimeout = null;
+  }
+
+  textEl.textContent = message;
+  toast.className = `ios-floating-toast toast-${type}`;
+  if (iconEl) {
+    iconEl.textContent = type === "warn" ? "⚠️" : type === "error" ? "❌" : type === "success" ? "✓" : "⚡";
+  }
+
+  toast.style.display = "flex";
+  toastTimeout = setTimeout(() => {
+    toast.style.display = "none";
+    toastTimeout = null;
+  }, 3500);
 }
 
 function escapeHtml(str) {
@@ -537,7 +614,12 @@ btnLaunch.addEventListener("click", async () => {
   const rawScript = (videoScriptInput.value || "").trim();
 
   if (!rawScript) {
-    alert("Please enter a video script before launching.");
+    showAppToast("Please enter a video script before launching.", "warn");
+    videoScriptInput.classList.add("input-error-glow");
+    videoScriptInput.focus();
+    setTimeout(() => {
+      videoScriptInput.classList.remove("input-error-glow");
+    }, 2000);
     return;
   }
 
@@ -548,7 +630,12 @@ btnLaunch.addEventListener("click", async () => {
     .filter(s => s.length > 0);
 
   if (sentences.length === 0) {
-    alert("No valid sentences found. Ensure sentences end with a period, exclamation, or question mark.");
+    showAppToast("No valid sentences found. Ensure sentences end with a period, exclamation, or question mark.", "warn");
+    videoScriptInput.classList.add("input-error-glow");
+    videoScriptInput.focus();
+    setTimeout(() => {
+      videoScriptInput.classList.remove("input-error-glow");
+    }, 2000);
     return;
   }
 
@@ -557,10 +644,16 @@ btnLaunch.addEventListener("click", async () => {
   const kieKey = cfgKieKey ? cfgKieKey.value.trim() : "";
 
   if (isAiGen && !kieKey) {
-    alert("Kie.ai API Key is required when using the AI Image Generator. Please enter your Kie.ai API key in the Settings tab.");
+    showAppToast("Kie.ai API Key is required for AI Image Generation. Redirecting to Settings...", "warn");
     appendLog("⚠️ Kie.ai API Key missing in Settings. Please enter your key in Settings to generate AI images.", "warn");
     switchTab("settings");
-    if (cfgKieKey) cfgKieKey.focus();
+    if (cfgKieKey) {
+      cfgKieKey.classList.add("input-error-glow");
+      cfgKieKey.focus();
+      setTimeout(() => {
+        cfgKieKey.classList.remove("input-error-glow");
+      }, 2500);
+    }
     return;
   }
 
@@ -654,9 +747,17 @@ btnCancel.addEventListener("click", () => {
 // ==========================================================================
 // 6. Real-Time Snapshot Telemetry Listener & Active Job Banner
 // ==========================================================================
+let seenLogsForJob = new Set();
+let lastSeenMilestone = "";
+
 function listenToJob(jobId) {
   if (unsubscribeJobSnapshot) {
     unsubscribeJobSnapshot();
+  }
+
+  if (currentJobId !== jobId) {
+    seenLogsForJob.clear();
+    lastSeenMilestone = "";
   }
 
   currentJobId = jobId;
@@ -679,9 +780,13 @@ function listenToJob(jobId) {
 
     if (data.logs && Array.isArray(data.logs)) {
       data.logs.forEach(logLine => {
-        appendLog(logLine, status === "failed" ? "error" : "info");
+        if (!seenLogsForJob.has(logLine)) {
+          seenLogsForJob.add(logLine);
+          appendLog(logLine, status === "failed" ? "error" : "info");
+        }
       });
-    } else {
+    } else if (milestone && milestone !== lastSeenMilestone) {
+      lastSeenMilestone = milestone;
       appendLog(`[${status.toUpperCase()}] ${milestone}`);
     }
 
@@ -791,10 +896,10 @@ function listenToAllJobs(userId) {
   );
 
   unsubscribeJobsSnapshot = onSnapshot(q, (snapshot) => {
-    allJobs = [];
+    const freshJobs = [];
     snapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      allJobs.push({
+      freshJobs.push({
         ...data,
         id: docSnap.id,
         jobId: data.jobId || data.job_id || docSnap.id
@@ -802,11 +907,13 @@ function listenToAllJobs(userId) {
     });
 
     // Sort descending by created_at or updated_at
-    allJobs.sort((a, b) => {
+    freshJobs.sort((a, b) => {
       const timeA = new Date(a.created_at || a.updated_at || 0).getTime();
       const timeB = new Date(b.created_at || b.updated_at || 0).getTime();
       return timeB - timeA;
     });
+
+    allJobs = freshJobs;
 
     updateJobFilterCounts();
     renderJobsList();
@@ -856,6 +963,71 @@ function updateJobFilterCounts() {
   if (countFailed) countFailed.textContent = counts.failed;
 }
 
+function renderJobCardInnerHtml(job, jId, status, progress, cachedCount, sceneCount, timeStr, modeTag, canResume) {
+  return `
+    <div class="job-item-header">
+      <div class="job-title-group">
+        <div class="job-item-title">${escapeHtml(job.title || "Untitled Video Automation")}</div>
+        <div class="job-item-id-time">
+          <span>#${escapeHtml(jId.slice(-8))}</span>
+          <span>•</span>
+          <span>${escapeHtml(timeStr)}</span>
+        </div>
+      </div>
+      <span class="job-status-pill status-${status}">
+        ${status === 'running' ? '<span class="pulse-dot"></span>' : ''}
+        ${status}
+      </span>
+    </div>
+
+    <div class="job-meta-row">
+      <span class="job-tag">${modeTag}</span>
+      <span class="job-tag">${sceneCount} scenes</span>
+      ${cachedCount > 0 ? `<span class="job-tag job-tag-credit">💾 ${cachedCount}/${sceneCount} scenes cached (credits safe)</span>` : ''}
+      ${job.voice ? `<span class="job-tag">🗣 ${escapeHtml(job.voice)}</span>` : ''}
+    </div>
+
+    <div class="job-progress-row">
+      <div class="job-progress-header">
+        <span class="job-milestone-snippet">${escapeHtml(job.current_milestone || "Processing...")}</span>
+        <span class="job-pct-val">${progress}%</span>
+      </div>
+      <div class="job-progress-bar">
+        <div class="job-progress-fill" style="width: ${progress}%; ${status === 'completed' ? 'background: #10b981;' : status === 'failed' ? 'background: #ef4444;' : ''}"></div>
+      </div>
+    </div>
+
+    <div class="job-actions-row">
+      <button type="button" class="btn-job-action btn-job-view" data-job-id="${escapeHtml(jId)}">
+        📊 View Telemetry
+      </button>
+      ${canResume ? `
+        <button type="button" class="btn-job-action btn-job-resume" data-job-id="${escapeHtml(jId)}">
+          ⚡ Resume (${cachedCount > 0 ? 'Reuse ' + cachedCount + ' Images' : 'Retry'})
+        </button>
+      ` : ''}
+      ${(status === 'running' || status === 'queued') ? `
+        <button type="button" class="btn-job-action btn-job-cancel" data-job-id="${escapeHtml(jId)}">
+          ⏹ Cancel
+        </button>
+      ` : ''}
+      ${job.asset_url && status === 'completed' ? `
+        <button type="button" class="btn-job-action btn-job-watch" data-asset-url="${escapeHtml(job.asset_url)}">
+          🎬 Watch Video
+        </button>
+      ` : ''}
+      ${job.script ? `
+        <button type="button" class="btn-job-action btn-job-edit" data-job-id="${escapeHtml(jId)}">
+          📋 Load in Studio
+        </button>
+      ` : ''}
+      <button type="button" class="btn-job-action btn-job-delete" data-job-id="${escapeHtml(jId)}" title="Delete permanently">
+        🗑 Delete
+      </button>
+    </div>
+  `;
+}
+
 function renderJobsList() {
   if (!jobsListContainer) return;
 
@@ -880,15 +1052,34 @@ function renderJobsList() {
     return;
   }
 
-  const html = filtered.map(job => {
+  // Remove empty state placeholder if present
+  const emptyState = jobsListContainer.querySelector(".jobs-empty-state");
+  if (emptyState) emptyState.remove();
+
+  // Index existing cards by jobId to preserve DOM nodes and prevent swallowing user clicks!
+  const existingCards = new Map();
+  jobsListContainer.querySelectorAll(".job-item-card").forEach(el => {
+    if (el.dataset.jobId) existingCards.set(el.dataset.jobId, el);
+  });
+
+  const targetIds = new Set(filtered.map(j => j.jobId || j.id));
+
+  // Remove cards that are no longer in filtered list
+  existingCards.forEach((el, id) => {
+    if (!targetIds.has(id)) {
+      el.remove();
+      existingCards.delete(id);
+    }
+  });
+
+  filtered.forEach(job => {
     const jId = job.jobId || job.id;
     const status = (job.status || "running").toLowerCase();
     const isActive = currentJobId === jId;
     const progress = Math.min(100, Math.max(0, job.progress || 0));
     const cachedCount = (job.completed_scenes && Array.isArray(job.completed_scenes)) ? job.completed_scenes.length : 0;
     const sceneCount = job.sentence_count || (job.sentences && job.sentences.length) || 0;
-    
-    // Format timestamp
+
     let timeStr = "";
     if (job.created_at) {
       try {
@@ -901,7 +1092,6 @@ function renderJobsList() {
       timeStr = "Recent";
     }
 
-    // Determine mode tag
     let modeTag = "📸 Stock Photos";
     if (job.use_ai_generator) {
       const styleName = job.image_style ? job.image_style.slice(0, 20) : "Hyper Realistic";
@@ -910,73 +1100,81 @@ function renderJobsList() {
 
     const canResume = status === "failed" || status === "cancelled" || (status === "running" && progress < 100);
 
-    return `
-      <div class="job-item-card ${isActive ? 'is-active-job' : ''}" data-job-id="${escapeHtml(jId)}">
-        <div class="job-item-header">
-          <div class="job-title-group">
-            <div class="job-item-title">${escapeHtml(job.title || "Untitled Video Automation")}</div>
-            <div class="job-item-id-time">
-              <span>#${escapeHtml(jId.slice(-8))}</span>
-              <span>•</span>
-              <span>${escapeHtml(timeStr)}</span>
-            </div>
-          </div>
-          <span class="job-status-pill status-${status}">
-            ${status === 'running' ? '<span class="pulse-dot"></span>' : ''}
-            ${status}
-          </span>
-        </div>
+    const existing = existingCards.get(jId);
+    if (existing) {
+      // In-place updates: Keeps button DOM nodes alive without swallowing click events!
+      existing.classList.toggle("is-active-job", isActive);
 
-        <div class="job-meta-row">
-          <span class="job-tag">${modeTag}</span>
-          <span class="job-tag">${sceneCount} scenes</span>
-          ${cachedCount > 0 ? `<span class="job-tag job-tag-credit">💾 ${cachedCount}/${sceneCount} scenes cached (credits safe)</span>` : ''}
-          ${job.voice ? `<span class="job-tag">🗣 ${escapeHtml(job.voice)}</span>` : ''}
-        </div>
+      const pill = existing.querySelector(".job-status-pill");
+      if (pill && pill.dataset.lastStatus !== status) {
+        pill.dataset.lastStatus = status;
+        pill.className = `job-status-pill status-${status}`;
+        pill.innerHTML = `${status === 'running' ? '<span class="pulse-dot"></span>' : ''}${status}`;
+      }
 
-        <div class="job-progress-row">
-          <div class="job-progress-header">
-            <span class="job-milestone-snippet">${escapeHtml(job.current_milestone || "Processing...")}</span>
-            <span class="job-pct-val">${progress}%</span>
-          </div>
-          <div class="job-progress-bar">
-            <div class="job-progress-fill" style="width: ${progress}%; ${status === 'completed' ? 'background: #10b981;' : status === 'failed' ? 'background: #ef4444;' : ''}"></div>
-          </div>
-        </div>
+      const milestoneEl = existing.querySelector(".job-milestone-snippet");
+      if (milestoneEl && milestoneEl.textContent !== (job.current_milestone || "Processing...")) {
+        milestoneEl.textContent = job.current_milestone || "Processing...";
+      }
 
-        <div class="job-actions-row">
-          <button type="button" class="btn-job-action btn-job-view" data-job-id="${escapeHtml(jId)}">
-            📊 View Telemetry
-          </button>
-          ${canResume ? `
-            <button type="button" class="btn-job-action btn-job-resume" data-job-id="${escapeHtml(jId)}">
-              ⚡ Resume (${cachedCount > 0 ? 'Reuse ' + cachedCount + ' Images' : 'Retry'})
-            </button>
-          ` : ''}
-          ${(status === 'running' || status === 'queued') ? `
-            <button type="button" class="btn-job-action btn-job-cancel" data-job-id="${escapeHtml(jId)}">
-              ⏹ Cancel
-            </button>
-          ` : ''}
-          ${job.asset_url && status === 'completed' ? `
-            <button type="button" class="btn-job-action btn-job-watch" data-asset-url="${escapeHtml(job.asset_url)}">
-              🎬 Watch Video
-            </button>
-          ` : ''}
-          ${job.script ? `
-            <button type="button" class="btn-job-action btn-job-edit" data-job-id="${escapeHtml(jId)}">
-              📋 Load in Studio
-            </button>
-          ` : ''}
-          <button type="button" class="btn-job-action btn-job-delete" data-job-id="${escapeHtml(jId)}" title="Delete permanently">
-            🗑 Delete
-          </button>
-        </div>
-      </div>
-    `;
-  }).join("");
+      const pctEl = existing.querySelector(".job-pct-val");
+      if (pctEl && pctEl.textContent !== `${progress}%`) {
+        pctEl.textContent = `${progress}%`;
+      }
 
-  jobsListContainer.innerHTML = html;
+      const fillEl = existing.querySelector(".job-progress-fill");
+      if (fillEl) {
+        fillEl.style.width = `${progress}%`;
+        fillEl.style.background = status === 'completed' ? '#10b981' : status === 'failed' ? '#ef4444' : '';
+      }
+
+      // Only rebuild buttons if status or resume capability changed
+      if (existing.dataset.status !== status || existing.dataset.canResume !== String(canResume)) {
+        existing.dataset.status = status;
+        existing.dataset.canResume = String(canResume);
+        const actionsRow = existing.querySelector(".job-actions-row");
+        if (actionsRow) {
+          actionsRow.innerHTML = `
+            <button type="button" class="btn-job-action btn-job-view" data-job-id="${escapeHtml(jId)}">
+              📊 View Telemetry
+            </button>
+            ${canResume ? `
+              <button type="button" class="btn-job-action btn-job-resume" data-job-id="${escapeHtml(jId)}">
+                ⚡ Resume (${cachedCount > 0 ? 'Reuse ' + cachedCount + ' Images' : 'Retry'})
+              </button>
+            ` : ''}
+            ${(status === 'running' || status === 'queued') ? `
+              <button type="button" class="btn-job-action btn-job-cancel" data-job-id="${escapeHtml(jId)}">
+                ⏹ Cancel
+              </button>
+            ` : ''}
+            ${job.asset_url && status === 'completed' ? `
+              <button type="button" class="btn-job-action btn-job-watch" data-asset-url="${escapeHtml(job.asset_url)}">
+                🎬 Watch Video
+              </button>
+            ` : ''}
+            ${job.script ? `
+              <button type="button" class="btn-job-action btn-job-edit" data-job-id="${escapeHtml(jId)}">
+                📋 Load in Studio
+              </button>
+            ` : ''}
+            <button type="button" class="btn-job-action btn-job-delete" data-job-id="${escapeHtml(jId)}" title="Delete permanently">
+              🗑 Delete
+            </button>
+          `;
+        }
+      }
+    } else {
+      // Card creation
+      const card = document.createElement("div");
+      card.className = `job-item-card ${isActive ? 'is-active-job' : ''}`;
+      card.dataset.jobId = jId;
+      card.dataset.status = status;
+      card.dataset.canResume = String(canResume);
+      card.innerHTML = renderJobCardInnerHtml(job, jId, status, progress, cachedCount, sceneCount, timeStr, modeTag, canResume);
+      jobsListContainer.appendChild(card);
+    }
+  });
 }
 
 // Select a job to view in telemetry & logs
@@ -1007,7 +1205,13 @@ function selectJob(jobId) {
 // Cancel an active or queued job
 async function cancelJob(jobId) {
   if (!jobId) return;
-  const confirmCancel = confirm(`Are you sure you want to abort Job #${jobId.slice(-8)}?`);
+  const confirmCancel = await showAppConfirm(
+    "Cancel Automation",
+    `Are you sure you want to abort Job #${jobId.slice(-8)}? The runner will be halted immediately.`,
+    "Yes, Cancel Run",
+    true,
+    "⏹"
+  );
   if (!confirmCancel) return;
 
   if (jobId === currentJobId && githubWatcherInterval) {
@@ -1017,6 +1221,7 @@ async function cancelJob(jobId) {
 
   try {
     if (btnCancel && jobId === currentJobId) btnCancel.disabled = true;
+    showAppToast(`Aborting Job #${jobId.slice(-8)}...`, "warn");
     appendLog(`⏹ Requesting cancellation for Job #${jobId.slice(-8)}...`, "warn");
     const jobDocRef = doc(db, "automations", jobId);
     await updateDoc(jobDocRef, {
@@ -1041,9 +1246,11 @@ async function cancelJob(jobId) {
         console.warn("GitHub Actions cancel call notice:", cErr);
       }
     }
+    showAppToast(`Job #${jobId.slice(-8)} cancelled successfully.`, "warn");
     appendLog(`Job #${jobId.slice(-8)} cancelled.`, "warn");
   } catch (err) {
     console.error("Cancel failed:", err);
+    showAppToast(`Cancel failed: ${err.message}`, "error");
     appendLog(`Cancel failed: ${err.message}`, "error");
   }
 }
@@ -1051,13 +1258,21 @@ async function cancelJob(jobId) {
 // Permanently delete a job record from Firestore
 async function deleteJob(jobId) {
   if (!jobId) return;
-  const confirmDel = confirm(`Are you sure you want to permanently delete Job #${jobId.slice(-8)}? This will remove all its telemetry records.`);
+  const confirmDel = await showAppConfirm(
+    "Delete Job Record",
+    `Are you sure you want to permanently delete Job #${jobId.slice(-8)}? This will remove all its telemetry records.`,
+    "Yes, Delete Record",
+    true,
+    "🗑"
+  );
   if (!confirmDel) return;
 
   try {
+    showAppToast(`Deleting Job #${jobId.slice(-8)}...`, "info");
     appendLog(`🗑 Deleting Job #${jobId.slice(-8)} from Firestore...`, "sys");
     const jobDocRef = doc(db, "automations", jobId);
     await deleteDoc(jobDocRef);
+    showAppToast(`Job #${jobId.slice(-8)} deleted.`, "success");
     appendLog(`Job #${jobId.slice(-8)} permanently deleted.`, "success");
 
     if (currentJobId === jobId) {
@@ -1078,6 +1293,7 @@ async function deleteJob(jobId) {
     }
   } catch (err) {
     console.error("Delete failed:", err);
+    showAppToast(`Delete failed: ${err.message}`, "error");
     appendLog(`Delete failed: ${err.message}`, "error");
   }
 }
@@ -1188,6 +1404,7 @@ if (jobsListContainer) {
         btnDownloadVideo.href = assetUrl;
         switchTab("studio");
         mediaOutputCard.scrollIntoView({ behavior: "smooth" });
+        showAppToast("Video loaded in Studio tab.", "info");
       }
       return;
     }
@@ -1239,11 +1456,18 @@ btnCopyAssetUrl.addEventListener("click", () => {
   if (!finalAssetUrl.value) return;
   navigator.clipboard.writeText(finalAssetUrl.value).then(() => {
     btnCopyAssetUrl.textContent = "✓ Copied!";
+    showAppToast("Video link copied to clipboard!", "success");
     setTimeout(() => {
       btnCopyAssetUrl.textContent = "📋 Copy Link";
     }, 2000);
   });
 });
+
+if (finalVideoPlayer) {
+  finalVideoPlayer.addEventListener("error", () => {
+    appendLog("Video player notice: If direct video playback is restricted by source host, click 'Copy Link' or 'Download' to view the media file directly.", "info");
+  });
+}
 
 // Initial stats update
 updateScriptStats();
