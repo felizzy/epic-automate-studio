@@ -57,7 +57,24 @@ active_subprocesses = []
 # =============================================================================
 # 1. Real-time Firestore Updates & Cancellation Watchdog
 # =============================================================================
-def update_firestore(progress: int, milestone: str, status: str = "running", asset_url: Optional[str] = None):
+def serialize_to_firestore_value(val):
+    if isinstance(val, bool):
+        return {"booleanValue": val}
+    elif isinstance(val, int):
+        return {"integerValue": str(val)}
+    elif isinstance(val, float):
+        return {"doubleValue": val}
+    elif isinstance(val, str):
+        return {"stringValue": val}
+    elif isinstance(val, list):
+        return {"arrayValue": {"values": [serialize_to_firestore_value(x) for x in val]}}
+    elif isinstance(val, dict):
+        return {"mapValue": {"fields": {k: serialize_to_firestore_value(v) for k, v in val.items()}}}
+    elif val is None:
+        return {"nullValue": None}
+    return {"stringValue": str(val)}
+
+def update_firestore(progress: int, milestone: str, status: str = "running", asset_url: Optional[str] = None, completed_scenes: Optional[List[Dict]] = None):
     """Sends real-time telemetry updates to Firestore document /automations/{JOB_ID} via REST."""
     url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/automations/{JOB_ID}"
     
@@ -74,6 +91,10 @@ def update_firestore(progress: int, milestone: str, status: str = "running", ass
         fields["asset_url"] = {"stringValue": asset_url}
         fields["asset_type"] = {"stringValue": "video"}
         update_masks.extend(["asset_url", "asset_type"])
+
+    if completed_scenes is not None:
+        fields["completed_scenes"] = serialize_to_firestore_value(completed_scenes)
+        update_masks.append("completed_scenes")
 
     query_str = "&".join([f"updateMask.fieldPaths={m}" for m in update_masks])
     
@@ -221,11 +242,11 @@ def generate_diffusion_prompt_with_nvidia(sentence: str, style: str, nvidia_key:
 # =============================================================================
 # 2.5 Kie.ai Z-Image Generator (Asynchronous Task Engine)
 # =============================================================================
-def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Optional[str]:
-    """Calls Kie.ai Z-Image model API, polls for completion, and downloads image to scene_{scene_idx:03d}.jpg."""
+def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Tuple[Optional[str], Optional[str]]:
+    """Calls Kie.ai Z-Image model API, polls for completion, and downloads image to scene_{scene_idx:03d}.jpg. Returns (out_path, remote_image_url)."""
     if not kie_key:
         logger.warning("Kie.ai API key is missing. Skipping AI generation and falling back to stock photo retrieval.")
-        return None
+        return None, None
 
     out_path = f"scene_{scene_idx:03d}.jpg"
     create_url = "https://api.kie.ai/api/v1/jobs/createTask"
@@ -258,13 +279,13 @@ def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Option
                 logger.info(f"[KIE.AI Z-IMAGE] Task {task_id} successfully created on Kie.ai")
             else:
                 logger.warning(f"Kie.ai createTask error code {code}: {resp_data.get('msg')}")
-                return None
+                return None, None
     except Exception as e:
         logger.warning(f"Kie.ai createTask network exception: {e}. Falling back to stock photos.")
-        return None
+        return None, None
 
     if not task_id:
-        return None
+        return None, None
 
     # Polling loop: query recordInfo every 3 seconds for up to 75 seconds
     poll_url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={task_id}"
@@ -310,7 +331,7 @@ def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Option
                     if image_url:
                         logger.info(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} successfully generated: {image_url}")
                         if download_and_crop_image(image_url, out_path):
-                            return out_path
+                            return out_path, image_url
                     break
 
                 elif state in ["fail", "error", "generate_failed"]:
@@ -322,7 +343,7 @@ def generate_image_with_kie(prompt: str, kie_key: str, scene_idx: int) -> Option
             logger.debug(f"Kie.ai polling check: {e}")
 
     logger.warning(f"[KIE.AI Z-IMAGE] Scene {scene_idx+1} generation incomplete or timed out. Gracefully falling back to stock photo retriever.")
-    return None
+    return None, None
 
 # =============================================================================
 # 3. Multi-Source Real Photography Retrieval (100% Guaranteed Real Images)
@@ -397,8 +418,8 @@ def download_and_crop_image(url: str, dest_path: str) -> bool:
         logger.debug(f"Image download notice ({url[:60]}...): {e}")
         return False
 
-def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx: int) -> str:
-    """Retrieves a guaranteed unique high-resolution real stock photograph across multiple providers."""
+def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx: int) -> Tuple[str, str]:
+    """Retrieves a guaranteed unique high-resolution real stock photograph across multiple providers. Returns (out_path, img_url)."""
     out_path = f"scene_{scene_idx:03d}.jpg"
     raw_words = [w.strip() for w in re.sub(r'[^\w\s]', '', query).split() if len(w) > 2]
     
@@ -454,7 +475,7 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
                                 if download_and_crop_image(img_url, out_path):
                                     USED_IMAGE_URLS.add(img_url)
                                     logger.info(f"[SOURCE: WIKIMEDIA COMMONS] Scene {scene_idx+1} matched '{phrase}' ({title}): {img_url}")
-                                    return out_path
+                                    return out_path, img_url
         except Exception as e:
             logger.debug(f"Wikimedia API notice: {e}")
 
@@ -475,7 +496,7 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
                     if download_and_crop_image(orig, out_path):
                         USED_IMAGE_URLS.add(orig)
                         logger.info(f"[SOURCE: WIKIPEDIA SUMMARY] Scene {scene_idx+1} matched '{noun}': {orig}")
-                        return out_path
+                        return out_path, orig
         except Exception as e:
             logger.debug(f"Wikipedia REST notice: {e}")
 
@@ -504,7 +525,7 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
                         if download_and_crop_image(img_url, out_path):
                             USED_IMAGE_URLS.add(img_url)
                             logger.info(f"[SOURCE: DUCKDUCKGO] Scene {scene_idx+1} matched '{combined_q}': {img_url}")
-                            return out_path
+                            return out_path, img_url
     except Exception as e:
         logger.debug(f"DuckDuckGo image search notice: {e}")
 
@@ -516,7 +537,7 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
         picsum_url = f"https://picsum.photos/seed/{unique_seed}/1920/1080"
         if download_and_crop_image(picsum_url, out_path):
             logger.info(f"[SOURCE: PICSUM PHOTO STREAM] Scene {scene_idx+1} fetched unique photography from {picsum_url}")
-            return out_path
+            return out_path, picsum_url
     except Exception as e:
         logger.debug(f"Picsum stream notice: {e}")
 
@@ -526,7 +547,7 @@ def fetch_unique_image(query: str, sentence: str, sources: List[str], scene_idx:
     fallback_url = CURATED_STOCK_PHOTOS[scene_idx % len(CURATED_STOCK_PHOTOS)]
     logger.info(f"[SOURCE: CURATED HD PHOTO] Scene {scene_idx+1} fetching authentic stock photo: {fallback_url}")
     download_and_crop_image(fallback_url, out_path)
-    return out_path
+    return out_path, fallback_url
 
 # =============================================================================
 # 4. Kokoro-82M TTS Audio Generation (<500MB weights)
@@ -731,6 +752,22 @@ def main():
             img_style = fields.get("image_style", {}).get("stringValue", "") or IMAGE_STYLE or "hyper realistic"
             kie_key = fields.get("kie_api_key", {}).get("stringValue", "") or KIE_API_KEY
 
+            # Parse previously completed scenes for credit-saving resume
+            completed_scenes_val = fields.get("completed_scenes", {}).get("arrayValue", {}).get("values", [])
+            cached_scenes = {}
+            for cv in completed_scenes_val:
+                mv = cv.get("mapValue", {}).get("fields", {})
+                s_idx_val = mv.get("scene_idx", {}).get("integerValue")
+                if s_idx_val is not None:
+                    s_idx = int(s_idx_val)
+                    cached_scenes[s_idx] = {
+                        "scene_idx": s_idx,
+                        "sentence": mv.get("sentence", {}).get("stringValue", ""),
+                        "image_url": mv.get("image_url", {}).get("stringValue", ""),
+                        "prompt": mv.get("prompt", {}).get("stringValue", ""),
+                        "status": mv.get("status", {}).get("stringValue", "completed")
+                    }
+
             job_data = {
                 "sentences": sentences,
                 "voice": voice,
@@ -740,7 +777,8 @@ def main():
                 "sources": sources,
                 "use_ai_generator": use_ai_gen,
                 "image_style": img_style,
-                "kie_key": kie_key
+                "kie_key": kie_key,
+                "cached_scenes": cached_scenes
             }
     except Exception as e:
         logger.warning(f"Could not load Firestore params ({e}). Using sample fallback.")
@@ -757,11 +795,18 @@ def main():
             "sources": ["wikimedia", "duckduckgo"],
             "use_ai_generator": USE_AI_GENERATOR,
             "image_style": IMAGE_STYLE,
-            "kie_key": KIE_API_KEY
+            "kie_key": KIE_API_KEY,
+            "cached_scenes": {}
         }
 
     sentences = job_data["sentences"]
     total_scenes = len(sentences)
+    cached_scenes = job_data.get("cached_scenes", {})
+    completed_scenes_list = [v for k, v in sorted(cached_scenes.items())]
+
+    if cached_scenes:
+        logger.info(f"[RESUME ENGINE] Found {len(cached_scenes)} previously completed scenes. Reusing them to preserve Kie.ai credits!")
+
     logger.info(f"Processing {total_scenes} video scenes (Mode: {'Kie.ai Z-Image' if job_data['use_ai_generator'] else 'Stock Photos'})...")
 
     scene_videos = []
@@ -771,35 +816,78 @@ def main():
         check_cancel()
         pct = 15 + int((i / total_scenes) * 65)
         
-        # Step A & B: Image Generation (Kie.ai Z-Image) or Stock Photo Retrieval
+        # Check if scene was already generated in a previous run
+        cached = cached_scenes.get(i)
         img_path = None
-        if job_data.get("use_ai_generator") and job_data.get("kie_key"):
-            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Generating {job_data['image_style'][:25]} AI image with Kie.ai Z-Image...")
-            ai_prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
-            img_path = generate_image_with_kie(ai_prompt, job_data["kie_key"], i)
+        img_url = None
+        ai_prompt = ""
+        
+        if cached and cached.get("image_url"):
+            cached_url = cached["image_url"]
+            target_path = f"scene_{i:03d}.jpg"
+            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reused cached image (saved Kie.ai credits!)...", completed_scenes=completed_scenes_list)
+            if download_and_crop_image(cached_url, target_path):
+                img_path = target_path
+                img_url = cached_url
+                ai_prompt = cached.get("prompt", "")
+                logger.info(f"[CREDIT SAVED] Scene {i+1}: Reused cached image from {cached_url}")
+            else:
+                logger.warning(f"Could not re-download cached image for scene {i+1}. Re-generating...")
+                cached = None
 
         if not img_path:
-            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...")
-            visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
-            img_path = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+            # Step A: Image Generation (Kie.ai Z-Image)
+            if job_data.get("use_ai_generator") and job_data.get("kie_key"):
+                update_firestore(pct, f"Scene {i+1}/{total_scenes}: Generating {job_data['image_style'][:25]} AI image with Kie.ai Z-Image...", completed_scenes=completed_scenes_list)
+                ai_prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
+                img_path, img_url = generate_image_with_kie(ai_prompt, job_data["kie_key"], i)
+
+            # Step B: Stock Photo Retrieval Fallback
+            if not img_path:
+                update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...", completed_scenes=completed_scenes_list)
+                visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
+                img_path, img_url = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+                ai_prompt = visual_query
+
+            # Cache the newly generated image immediately in completed_scenes
+            scene_entry = {
+                "scene_idx": i,
+                "sentence": sentence,
+                "image_url": img_url or "",
+                "prompt": ai_prompt or "",
+                "status": "completed"
+            }
+            # Update existing or append
+            existing_idx = next((idx for idx, s in enumerate(completed_scenes_list) if s.get("scene_idx") == i), None)
+            if existing_idx is not None:
+                completed_scenes_list[existing_idx] = scene_entry
+            else:
+                completed_scenes_list.append(scene_entry)
+            
+            # Immediately persist to Firestore so that credits are never lost if a subsequent scene fails
+            update_firestore(
+                pct + 1,
+                f"Scene {i+1}/{total_scenes}: Image generated and cached in cloud.",
+                completed_scenes=completed_scenes_list
+            )
         
         # Step C: Kokoro TTS audio
-        update_firestore(pct + 2, f"Scene {i+1}/{total_scenes}: Generating Kokoro-82M speech ({job_data['voice']})...")
+        update_firestore(pct + 2, f"Scene {i+1}/{total_scenes}: Generating Kokoro-82M speech ({job_data['voice']})...", completed_scenes=completed_scenes_list)
         audio_path, duration = generate_kokoro_audio(sentence, job_data["voice"], job_data["speed"], i)
         
         # Step D: Assemble scene video with captions
-        update_firestore(pct + 4, f"Scene {i+1}/{total_scenes}: Assembling video scene with dynamic captions...")
+        update_firestore(pct + 4, f"Scene {i+1}/{total_scenes}: Assembling video scene with dynamic captions...", completed_scenes=completed_scenes_list)
         scene_mp4 = assemble_scene_video(img_path, audio_path, sentence, duration, job_data["captions"], i)
         scene_videos.append(scene_mp4)
 
     # 4. Master Video Concatenation
     check_cancel()
-    update_firestore(85, "Concatenating all scenes into master 1080p video...")
+    update_firestore(85, "Concatenating all scenes into master 1080p video...", completed_scenes=completed_scenes_list)
     final_video = concatenate_scenes(scene_videos, "final_video.mp4")
 
     # 5. Upload to Hugging Face Datasets
     check_cancel()
-    update_firestore(92, "Uploading final video to Hugging Face Datasets...")
+    update_firestore(92, "Uploading final video to Hugging Face Datasets...", completed_scenes=completed_scenes_list)
     asset_url = upload_to_huggingface(final_video, JOB_ID, HF_DATASET_REPO, HF_TOKEN)
 
     # 6. Complete & Update Firestore
@@ -808,7 +896,8 @@ def main():
         progress=100,
         milestone="Video generation complete! Output asset ready for preview.",
         status="completed",
-        asset_url=asset_url
+        asset_url=asset_url,
+        completed_scenes=completed_scenes_list
     )
     logger.info(f"Job completed successfully. Asset URL: {asset_url}")
 
