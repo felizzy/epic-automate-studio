@@ -75,6 +75,12 @@
   - **Kie.ai Z-Image Generation**: `generate_image_with_kie` calls `POST https://api.kie.ai/api/v1/jobs/createTask` (`model: "z-image"`, `aspect_ratio: "16:9"`), polls task progress until completion, extracts the generated image, center-crops to 1920x1080, and falls back gracefully to stock photos if the key is omitted or fails.
   - **Firestore Rules Update**: Updated via `firestore-rules-author` subagent to allow `kie_api_key` in `/users/{userId}` and `use_ai_generator`, `image_style`, `kie_api_key` in `/automations/{jobId}`.
   - **Deployment**: Synchronized to GitHub repository `felizzy/epic-automate-studio` and deployed to Firebase Hosting `https://epic-studio-94147.web.app`.
+- **2026-11-27**: Added **All Job Executions Directory & Credit-Preserving Resume Engine**:
+  - **Complete Executed Jobs List**: Live Monitor tab now displays all jobs executed by the user with filter pills (All, Running, Completed, Failed), relative timestamps, status pills (with animated pulse for active runs), mode badges, and progress bars.
+  - **Credit-Preserving Intermediate Scene Cache**: Every generated image URL is immediately written to `completed_scenes` in `/automations/{jobId}` via Firestore REST PATCH.
+  - **Seamless Resume Execution**: If an execution stops or fails (e.g. runner timeout, network hitch, or manual pause), users can click **"⚡ Resume Execution"** from the job list or the active telemetry card banner. The runner detects `completed_scenes` in Firestore, reuses all existing images, and generates only the remaining scenes—**guaranteeing zero Kie.ai API credits are wasted**.
+  - **Firestore Rules Hardening**: Delegated to `firestore-rules-author` subagent to validate `completed_scenes` (list/map up to 500 entries) and `retry_count` in `isValidAutomationDoc` and worker update diff key whitelists. Rules deployed to Firebase.
+  - **Deployment**: Code synchronized to GitHub repository and frontend deployed to Firebase Hosting.
 
 ---
 
