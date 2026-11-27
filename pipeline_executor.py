@@ -30,6 +30,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 from typing import List, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("epic_video_worker")
@@ -709,6 +710,36 @@ def upload_to_huggingface(filepath: str, job_id: str, repo_id: str, token: str) 
         logger.warning(f"Hugging Face upload notice ({e}). Supplying public preview stream.")
         return "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 
+def process_scene_image(i: int, sentence: str, job_data: Dict, cached_scenes: Dict, total_scenes: int) -> Tuple[int, str, str, str]:
+    """Generates or retrieves the image for scene i. Returns (i, img_path, img_url, prompt)."""
+    check_cancel()
+    cached = cached_scenes.get(i)
+    target_path = f"scene_{i:03d}.jpg"
+    
+    # 1. Check if cached from a previous run
+    if cached and cached.get("image_url"):
+        cached_url = cached["image_url"]
+        logger.info(f"[RESUME CACHE] Scene {i+1}/{total_scenes}: Reusing cached image {cached_url} (credits preserved)")
+        if download_and_crop_image(cached_url, target_path):
+            return i, target_path, cached_url, cached.get("prompt", "")
+        logger.warning(f"Could not re-download cached image for scene {i+1}. Re-generating...")
+
+    # 2. Generate with Kie.ai Z-Image if enabled
+    img_path, img_url, prompt = None, None, ""
+    if job_data.get("use_ai_generator") and job_data.get("kie_key"):
+        logger.info(f"[PARALLEL AI ENGINE] Scene {i+1}/{total_scenes}: Generating AI image with Kie.ai Z-Image...")
+        prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
+        img_path, img_url = generate_image_with_kie(prompt, job_data["kie_key"], i)
+
+    # 3. Fallback to Stock Photography
+    if not img_path:
+        logger.info(f"[PARALLEL STOCK ENGINE] Scene {i+1}/{total_scenes}: Searching stock photography...")
+        visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
+        img_path, img_url = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
+        prompt = visual_query
+
+    return i, img_path, img_url, prompt
+
 # =============================================================================
 # 8. Main Execution Entrypoint
 # =============================================================================
@@ -809,74 +840,59 @@ def main():
 
     logger.info(f"Processing {total_scenes} video scenes (Mode: {'Kie.ai Z-Image' if job_data['use_ai_generator'] else 'Stock Photos'})...")
 
-    scene_videos = []
-    
-    # 3. Process Each Scene
-    for i, sentence in enumerate(sentences):
-        check_cancel()
-        pct = 15 + int((i / total_scenes) * 65)
-        
-        # Check if scene was already generated in a previous run
-        cached = cached_scenes.get(i)
-        img_path = None
-        img_url = None
-        ai_prompt = ""
-        
-        if cached and cached.get("image_url"):
-            cached_url = cached["image_url"]
-            target_path = f"scene_{i:03d}.jpg"
-            update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reused cached image (saved Kie.ai credits!)...", completed_scenes=completed_scenes_list)
-            if download_and_crop_image(cached_url, target_path):
-                img_path = target_path
-                img_url = cached_url
-                ai_prompt = cached.get("prompt", "")
-                logger.info(f"[CREDIT SAVED] Scene {i+1}: Reused cached image from {cached_url}")
-            else:
-                logger.warning(f"Could not re-download cached image for scene {i+1}. Re-generating...")
-                cached = None
+    # =========================================================================
+    # Phase 3: High-Speed Concurrent Image Generation (5 to 10 Workers in Parallel)
+    # =========================================================================
+    concurrency = min(10, max(5, total_scenes))
+    update_firestore(15, f"Launching high-speed parallel image generation ({concurrency} workers)...", completed_scenes=completed_scenes_list)
+    logger.info(f"[CONCURRENT ENGINE] Dispatching {total_scenes} scenes across {concurrency} parallel worker threads...")
 
-        if not img_path:
-            # Step A: Image Generation (Kie.ai Z-Image)
-            if job_data.get("use_ai_generator") and job_data.get("kie_key"):
-                update_firestore(pct, f"Scene {i+1}/{total_scenes}: Generating {job_data['image_style'][:25]} AI image with Kie.ai Z-Image...", completed_scenes=completed_scenes_list)
-                ai_prompt = generate_diffusion_prompt_with_nvidia(sentence, job_data["image_style"], job_data["nvidia_key"])
-                img_path, img_url = generate_image_with_kie(ai_prompt, job_data["kie_key"], i)
+    scene_images = [None] * total_scenes
+    images_finished = 0
 
-            # Step B: Stock Photo Retrieval Fallback
-            if not img_path:
-                update_firestore(pct, f"Scene {i+1}/{total_scenes}: Reasoning visual scene & retrieving unique stock photo...", completed_scenes=completed_scenes_list)
-                visual_query = generate_visual_query_with_nvidia(sentence, job_data["nvidia_key"])
-                img_path, img_url = fetch_unique_image(visual_query, sentence, job_data["sources"], i)
-                ai_prompt = visual_query
-
-            # Cache the newly generated image immediately in completed_scenes
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(process_scene_image, i, sentence, job_data, cached_scenes, total_scenes): i
+            for i, sentence in enumerate(sentences)
+        }
+        for future in as_completed(futures):
+            check_cancel()
+            i, img_path, img_url, prompt = future.result()
+            scene_images[i] = img_path
+            images_finished += 1
+            
+            # Immediately cache this scene in Firestore
             scene_entry = {
                 "scene_idx": i,
-                "sentence": sentence,
+                "sentence": sentences[i],
                 "image_url": img_url or "",
-                "prompt": ai_prompt or "",
+                "prompt": prompt or "",
                 "status": "completed"
             }
-            # Update existing or append
             existing_idx = next((idx for idx, s in enumerate(completed_scenes_list) if s.get("scene_idx") == i), None)
             if existing_idx is not None:
                 completed_scenes_list[existing_idx] = scene_entry
             else:
                 completed_scenes_list.append(scene_entry)
             
-            # Immediately persist to Firestore so that credits are never lost if a subsequent scene fails
+            pct = 15 + int((images_finished / total_scenes) * 45)
             update_firestore(
-                pct + 1,
-                f"Scene {i+1}/{total_scenes}: Image generated and cached in cloud.",
+                pct,
+                f"Generated image {images_finished}/{total_scenes} (Scene {i+1} cached)",
                 completed_scenes=completed_scenes_list
             )
-        
-        # Step C: Kokoro TTS audio
-        update_firestore(pct + 2, f"Scene {i+1}/{total_scenes}: Generating Kokoro-82M speech ({job_data['voice']})...", completed_scenes=completed_scenes_list)
+
+    # =========================================================================
+    # Phase 4: Audio Synthesis & Video Scene Assembly
+    # =========================================================================
+    scene_videos = []
+    for i, sentence in enumerate(sentences):
+        check_cancel()
+        pct = 60 + int((i / total_scenes) * 25)
+        img_path = scene_images[i] or f"scene_{i:03d}.jpg"
+
+        update_firestore(pct, f"Scene {i+1}/{total_scenes}: Synthesizing Kokoro speech & burning captions...", completed_scenes=completed_scenes_list)
         audio_path, duration = generate_kokoro_audio(sentence, job_data["voice"], job_data["speed"], i)
-        
-        # Step D: Assemble scene video with captions
-        update_firestore(pct + 4, f"Scene {i+1}/{total_scenes}: Assembling video scene with dynamic captions...", completed_scenes=completed_scenes_list)
         scene_mp4 = assemble_scene_video(img_path, audio_path, sentence, duration, job_data["captions"], i)
         scene_videos.append(scene_mp4)
 
